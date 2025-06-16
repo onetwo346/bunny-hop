@@ -28,33 +28,33 @@
                 super({ key: 'GameScene' });
                 this.score = 0;
                 this.carrots = 0;
-                this.groundOffset = 0;
                 this.isJumping = false;
+                this.isCrouching = false;
                 this.lastGroundTime = 0;
-                this.runFrame = 0; // Controls run cycle
+                this.hopTimer = 0;
                 this.blinkFrame = 0;
                 this.earTwitchFrame = 0;
                 this.tailWagFrame = 0;
-                this.wallDelay = 4000;
+                this.runSpeed = 0;
                 this.coyoteTime = 100;
-                this.runSpeed = 0; // Track horizontal speed
-                this.hopCycle = 0; // Track 4-beat hop cycle
+                this.hopInterval = 300; // Time between micro-hops (ms)
             }
 
             init(data) {
                 this.difficulty = data.difficulty || 2;
                 const difficultySettings = {
-                    1: { speed: 300, obstacleDelay: 3000, carrotDelay: 4000, platformDelay: 5000 },
-                    2: { speed: 400, obstacleDelay: 2000, carrotDelay: 3000, platformDelay: 4000 },
-                    3: { speed: 500, obstacleDelay: 1500, carrotDelay: 2500, platformDelay: 3500 },
-                    4: { speed: 600, obstacleDelay: 1200, carrotDelay: 2000, platformDelay: 3000 },
-                    5: { speed: 700, obstacleDelay: 1000, carrotDelay: 1800, platformDelay: 2500 }
+                    1: { speed: 300, obstacleDelay: 3000, carrotDelay: 4000, platformDelay: 5000, wallDelay: 4000 },
+                    2: { speed: 400, obstacleDelay: 2000, carrotDelay: 3000, platformDelay: 4000, wallDelay: 3500 },
+                    3: { speed: 500, obstacleDelay: 1500, carrotDelay: 2500, platformDelay: 3500, wallDelay: 3000 },
+                    4: { speed: 600, obstacleDelay: 1200, carrotDelay: 2000, platformDelay: 3000, wallDelay: 2500 },
+                    5: { speed: 700, obstacleDelay: 1000, carrotDelay: 1800, platformDelay: 2500, wallDelay: 2000 }
                 };
                 const settings = difficultySettings[this.difficulty];
                 this.speed = settings.speed;
                 this.obstacleDelay = settings.obstacleDelay;
                 this.carrotDelay = settings.carrotDelay;
                 this.platformDelay = settings.platformDelay;
+                this.wallDelay = settings.wallDelay;
             }
 
             preload() {
@@ -62,17 +62,14 @@
             }
 
             create() {
-                // Initialize graphics objects
-                this.skyGraphics = this.add.graphics();
-                this.hillsGraphics = this.add.graphics();
-                this.bushesGraphics = this.add.graphics();
+                // Initialize graphics
+                this.backgroundGraphics = this.add.graphics();
                 this.groundGraphics = this.add.graphics();
                 this.bunnyGraphics = this.add.graphics();
                 this.leftEarGraphics = this.add.graphics();
                 this.rightEarGraphics = this.add.graphics();
 
-                // Draw static background elements
-                this.drawSky();
+                // Draw background
                 this.drawBackground();
 
                 // Initialize clouds
@@ -87,35 +84,33 @@
                 this.physics.add.existing(this.ground, true);
 
                 // Create bunny
-                this.bunny = this.add.container(100, 300);
+                this.bunny = this.add.container(100, 450);
                 this.bunny.add([this.bunnyGraphics, this.leftEarGraphics, this.rightEarGraphics]);
                 this.bunny.setSize(60, 80);
                 this.physics.add.existing(this.bunny);
-                this.bunny.body.setGravityY(1800); // Increased gravity for quick ground return
+                this.bunny.body.setGravityY(1800); // Strong gravity for grounding
                 this.bunny.body.setCollideWorldBounds(true);
                 this.bunny.body.setMaxVelocityY(1200);
-                this.bunny.body.setDragX(1800); // Higher drag for grounding
+                this.bunny.body.setDragX(2000); // High drag for quick stops
                 this.updateBunnyGraphics();
 
                 // Create groups
-                this.platforms = this.physics.add.group({
-                    allowGravity: false,
-                    immovable: true
-                });
-                this.walls = this.physics.add.group({
-                    allowGravity: false,
-                    immovable: true
-                });
+                this.platforms = this.physics.add.group({ allowGravity: false, immovable: true });
+                this.walls = this.physics.add.group({ allowGravity: false, immovable: true });
+                this.obstacles = this.physics.add.group({ allowGravity: false });
+                this.carrotsGroup = this.physics.add.group({ allowGravity: false });
 
                 // Set up collisions
                 this.physics.add.collider(this.bunny, this.ground);
                 this.physics.add.collider(this.bunny, this.platforms);
                 this.physics.add.collider(this.bunny, this.walls);
+                this.physics.add.overlap(this.bunny, this.obstacles, this.checkObstacleCollision, null, this);
+                this.physics.add.overlap(this.bunny, this.carrotsGroup, this.collectCarrot, null, this);
 
                 // Input handling
                 this.cursors = this.input.keyboard.createCursorKeys();
-                this.input.on('pointerdown', this.jump, this);
-                this.input.keyboard.on('keydown-SPACE', this.jump, this);
+                this.input.on('pointerdown', this.handleJumpInput, this);
+                this.input.keyboard.on('keydown-SPACE', this.handleJumpInput, this);
 
                 // UI elements
                 this.scoreText = this.add.text(16, 16, 'Score: 0', {
@@ -130,75 +125,23 @@
                 });
 
                 // Timed events
-                this.time.addEvent({
-                    delay: this.obstacleDelay,
-                    callback: this.spawnObstacle,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.carrotDelay,
-                    callback: this.spawnCarrot,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.platformDelay,
-                    callback: this.spawnPlatform,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.wallDelay,
-                    callback: this.spawnWall,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: 50, // Faster update for smoother animation
-                    callback: this.updateAnimations,
-                    callbackScope: this,
-                    loop: true
-                });
-            }
-
-            drawSky() {
-                this.skyGraphics.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0FFFF, 0xE0FFFF, 1);
-                this.skyGraphics.fillRect(0, 0, 800, 600);
-            }
-
-            spawnCloud() {
-                try {
-                    const cloud = this.add.graphics();
-                    cloud.fillStyle(0xFFFFFF, 0.8);
-                    cloud.fillEllipse(850, Phaser.Math.Between(50, 150), 60, 30);
-                    cloud.fillEllipse(870, Phaser.Math.Between(50, 150), 50, 25);
-                    this.clouds.push(cloud);
-                    this.tweens.add({
-                        targets: cloud,
-                        x: -100,
-                        duration: 20000,
-                        onComplete: () => {
-                            if (cloud && cloud.active) {
-                                cloud.destroy();
-                                this.clouds = this.clouds.filter(c => c !== cloud);
-                                this.spawnCloud();
-                            }
-                        }
-                    });
-                } catch (error) {
-                    console.warn('Error spawning cloud:', error);
-                }
+                this.time.addEvent({ delay: this.obstacleDelay, callback: this.spawnObstacle, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.carrotDelay, callback: this.spawnCarrot, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.platformDelay, callback: this.spawnPlatform, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.wallDelay, callback: this.spawnWall, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: 60, callback: this.updateAnimations, callbackScope: this, loop: true });
             }
 
             drawBackground() {
-                this.hillsGraphics.fillStyle(0x6B7280, 0.8);
+                this.backgroundGraphics.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0FFFF, 0xE0FFFF, 1);
+                this.backgroundGraphics.fillRect(0, 0, 800, 600);
+                this.backgroundGraphics.fillStyle(0x6B7280, 0.8);
                 for (let x = -400; x < 1200; x += 200) {
-                    this.hillsGraphics.fillTriangle(x, 500, x + 100, 400, x + 200, 500);
+                    this.backgroundGraphics.fillTriangle(x, 500, x + 100, 400, x + 200, 500);
                 }
-                this.bushesGraphics.fillStyle(0x2F855A, 0.9);
+                this.backgroundGraphics.fillStyle(0x2F855A, 0.9);
                 for (let x = -400; x < 1200; x += 100) {
-                    this.bushesGraphics.fillEllipse(x, 480, 60, 40);
+                    this.backgroundGraphics.fillEllipse(x, 480, 60, 40);
                 }
             }
 
@@ -207,9 +150,29 @@
                 this.groundGraphics.fillStyle(0x4A7043, 1);
                 this.groundGraphics.fillRect(0, 500, 800, 100);
                 this.groundGraphics.fillStyle(0x2E8B57, 1);
-                for (let x = -this.groundOffset % 20; x < 800; x += 20) {
+                for (let x = 0; x < 800; x += 20) {
                     this.groundGraphics.fillTriangle(x, 500, x + 5, 480, x + 10, 500);
                 }
+            }
+
+            spawnCloud() {
+                const cloud = this.add.graphics();
+                cloud.fillStyle(0xFFFFFF, 0.8);
+                cloud.fillEllipse(850, Phaser.Math.Between(50, 150), 60, 30);
+                cloud.fillEllipse(870, Phaser.Math.Between(50, 150), 50, 25);
+                this.clouds.push(cloud);
+                this.tweens.add({
+                    targets: cloud,
+                    x: -100,
+                    duration: 20000,
+                    onComplete: () => {
+                        if (cloud.active) {
+                            cloud.destroy();
+                            this.clouds = this.clouds.filter(c => c !== cloud);
+                            this.spawnCloud();
+                        }
+                    }
+                });
             }
 
             updateBunnyGraphics() {
@@ -217,446 +180,322 @@
                 this.leftEarGraphics.clear();
                 this.rightEarGraphics.clear();
 
-                // Dynamic shadow with stronger grounding
-                const shadowScale = 1 + (this.bunny.body.touching.down ? 0.2 : Math.max(0, this.bunny.body.velocity.y / 800));
-                this.bunnyGraphics.fillStyle(0x000000, this.bunny.body.touching.down ? 0.6 : 0.2);
+                // Shadow
+                const shadowScale = 1 + (this.bunny.body.touching.down ? 0.15 : Math.max(0, this.bunny.body.velocity.y / 1200));
+                this.bunnyGraphics.fillStyle(0x000000, this.bunny.body.touching.down ? 0.5 : 0.2);
                 this.bunnyGraphics.fillEllipse(0, 60, 70 * shadowScale, 15 / shadowScale);
 
-                // Body hop with rabbit-like amplitude
-                const hopHeight = this.bunny.body.touching.down ? 15 * Math.sin(this.hopCycle * 2 * Math.PI) : 0; // Increased amplitude
-                const bodyScaleY = this.isJumping ? 0.85 : 1.0 + 0.15 * Math.sin(this.hopCycle * 2 * Math.PI);
-                const bodyScaleX = this.runSpeed > 0 ? 1.2 : this.runSpeed < 0 ? 0.8 : 1;
+                // Body with crouch and hop effects
+                const crouchScale = this.isCrouching ? 0.8 : 1.0;
+                const hopHeight = this.bunny.body.touching.down && !this.isJumping ? 5 * Math.sin(this.hopTimer / this.hopInterval * Math.PI) : 0;
+                const bodyScaleX = this.runSpeed > 0 ? 1.15 : this.runSpeed < 0 ? 0.85 : 1;
                 this.bunnyGraphics.fillStyle(0xD3D8DC, 1);
-                this.bunnyGraphics.fillRoundedRect(-45 * bodyScaleX, -40 * bodyScaleY + hopHeight, 90 * bodyScaleX, 70 * bodyScaleY, 25);
+                this.bunnyGraphics.fillRoundedRect(-45 * bodyScaleX, (-40 + hopHeight) * crouchScale, 90 * bodyScaleX, 70 * crouchScale, 25);
                 this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
-                this.bunnyGraphics.fillRoundedRect(-40 * bodyScaleX, -35 * bodyScaleY + hopHeight, 80 * bodyScaleX, 60 * bodyScaleY, 20);
+                this.bunnyGraphics.fillRoundedRect(-40 * bodyScaleX, (-35 + hopHeight) * crouchScale, 80 * bodyScaleX, 60 * crouchScale, 20);
                 this.bunnyGraphics.lineStyle(1, 0xB0B7C0, 0.6);
                 for (let x = -35; x <= 35; x += 10) {
-                    this.bunnyGraphics.lineBetween(x * bodyScaleX, -25 * bodyScaleY + hopHeight, x * bodyScaleX + 5, -15 * bodyScaleY + hopHeight);
+                    this.bunnyGraphics.lineBetween(x * bodyScaleX, (-25 + hopHeight) * crouchScale, x * bodyScaleX + 5, (-15 + hopHeight) * crouchScale);
                 }
 
-                // Ear movement
-                const earAngleBase = this.runSpeed !== 0 ? 20 * Math.sign(this.runSpeed) : 0;
-                const earAngleLeft = this.earTwitchFrame === 1 ? earAngleBase - 25 : earAngleBase;
-                const earAngleRight = this.earTwitchFrame === 2 ? earAngleBase + 25 : earAngleBase;
+                // Ears
+                const earAngleBase = this.runSpeed !== 0 ? 15 * Math.sign(this.runSpeed) : 0;
+                const earAngleLeft = this.earTwitchFrame === 1 ? earAngleBase - 20 : earAngleBase;
+                const earAngleRight = this.earTwitchFrame === 2 ? earAngleBase + 20 : earAngleBase;
                 this.leftEarGraphics.setAngle(earAngleLeft);
                 this.rightEarGraphics.setAngle(earAngleRight);
                 this.leftEarGraphics.fillGradientStyle(0xF8F9FA, 0xE8ECEF, 0xF8F9FA, 0xE8ECEF, 1);
                 this.leftEarGraphics.fillEllipse(-30, -70 + hopHeight, 20, 50);
                 this.leftEarGraphics.fillStyle(0xFFC1CC, 1);
                 this.leftEarGraphics.fillEllipse(-30, -70 + hopHeight, 14, 40);
-                this.leftEarGraphics.lineStyle(1, 0xD3D3D3, 0.4);
-                this.leftEarGraphics.lineBetween(-30, -60 + hopHeight, -30, -50 + hopHeight);
                 this.rightEarGraphics.fillGradientStyle(0xF8F9FA, 0xE8ECEF, 0xF8F9FA, 0xE8ECEF, 1);
                 this.rightEarGraphics.fillEllipse(30, -68 + hopHeight, 20, 50);
                 this.rightEarGraphics.fillStyle(0xFFC1CC, 1);
                 this.rightEarGraphics.fillEllipse(30, -68 + hopHeight, 14, 40);
-                this.rightEarGraphics.lineStyle(1, 0xD3D3D3, 0.4);
-                this.rightEarGraphics.lineBetween(30, -58 + hopHeight, 30, -48 + hopHeight);
 
-                // Tail wag
-                const tailOffset = this.tailWagFrame * 5 * (Math.abs(this.runSpeed) / 200);
+                // Tail
+                const tailOffset = this.tailWagFrame * 4 * (Math.abs(this.runSpeed) / 200);
                 this.bunnyGraphics.fillGradientStyle(0xFFFFFF, 0xF8F9FA, 0xFFFFFF, 0xF8F9FA, 1);
-                this.bunnyGraphics.fillCircle(-40 + tailOffset, 20 + hopHeight, 18);
+                this.bunnyGraphics.fillCircle(-40 + tailOffset, (20 + hopHeight) * crouchScale, 18);
                 this.bunnyGraphics.fillStyle(0xE8ECEF, 1);
-                this.bunnyGraphics.fillCircle(-40 + tailOffset, 20 + hopHeight, 14);
+                this.bunnyGraphics.fillCircle(-40 + tailOffset, (20 + hopHeight) * crouchScale, 14);
 
-                // Rabbit-like 4-beat leg cycle
-                const legHeightBase = this.isJumping ? 15 : 35;
-                const legHop = this.bunny.body.touching.down ? 15 * Math.cos(this.hopCycle * 2 * Math.PI) : 0; // Increased amplitude
+                // Legs with hopping animation
+                const legHeightBase = this.isJumping ? 15 : 30;
+                const legHop = this.bunny.body.touching.down ? 10 * Math.cos(this.hopTimer / this.hopInterval * Math.PI) : 0;
                 this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
-                const legCycle = Math.floor(this.runFrame / 2) % 4; // 4-beat cycle
+                const legCycle = Math.floor(this.hopTimer / (this.hopInterval / 4)) % 4;
                 const legPositions = [
-                    // Phase 0: Left front and right hind extended
                     { x1: -35, y1: 15, h1: legHeightBase + legHop, x2: 15, y2: 25, h2: legHeightBase + legHop - 10 },
-                    // Phase 1: Right front and left hind extended
                     { x1: 15, y1: 15, h1: legHeightBase + legHop, x2: -35, y2: 25, h2: legHeightBase + legHop - 10 },
-                    // Phase 2: All legs briefly off (mid-hop)
-                    { x1: -20, y1: 10, h1: legHeightBase - 10, x2: 20, y2: 20, h2: legHeightBase - 10 },
-                    // Phase 3: Right front and left hind extended (variation)
-                    { x1: 15, y1: 18, h1: legHeightBase + legHop - 5, x2: -35, y2: 28, h2: legHeightBase + legHop - 15 }
+                    { x1: -35, y1: 18, h1: legHeightBase + legHop - 3, x2: 15, y2: 28, h2: legHeightBase + legHop - 12 },
+                    { x1: 15, y1: 18, h1: legHeightBase + legHop - 3, x2: -35, y2: 28, h2: legHeightBase + legHop - 12 }
                 ];
                 const pos = legPositions[legCycle];
-                this.bunnyGraphics.fillRoundedRect(pos.x1 * bodyScaleX, pos.y1 + hopHeight, 20, pos.h1, 8);
-                this.bunnyGraphics.fillRoundedRect(pos.x2 * bodyScaleX, pos.y2 + hopHeight, 20, pos.h2, 8);
+                this.bunnyGraphics.fillRoundedRect(pos.x1 * bodyScaleX, (pos.y1 + hopHeight) * crouchScale, 20, pos.h1, 8);
+                this.bunnyGraphics.fillRoundedRect(pos.x2 * bodyScaleX, (pos.y2 + hopHeight) * crouchScale, 20, pos.h2, 8);
 
-                // Face and eyes
+                // Face
                 this.bunnyGraphics.fillStyle(this.blinkFrame > 0 ? 0x000000 : 0x000000, 1);
                 const eyeSize = Math.abs(this.runSpeed) > 10 ? 10 : 9;
                 const eyeHeight = this.blinkFrame > 0 ? 4 : 9;
-                this.bunnyGraphics.fillEllipse(-20, -18 + hopHeight, eyeSize, eyeHeight);
-                this.bunnyGraphics.fillEllipse(20, -18 + hopHeight, eyeSize, eyeHeight);
+                this.bunnyGraphics.fillEllipse(-20, (-18 + hopHeight) * crouchScale, eyeSize, eyeHeight);
+                this.bunnyGraphics.fillEllipse(20, (-18 + hopHeight) * crouchScale, eyeSize, eyeHeight);
                 if (!this.blinkFrame) {
                     this.bunnyGraphics.fillStyle(0xFFFFFF, 1);
-                    this.bunnyGraphics.fillCircle(-19, -19 + hopHeight, 3);
-                    this.bunnyGraphics.fillCircle(21, -19 + hopHeight, 3);
-                }
-                this.bunnyGraphics.lineStyle(1, 0x000000, 0.8);
-                if (!this.blinkFrame) {
-                    this.bunnyGraphics.lineBetween(-20, -23 + hopHeight, -22, -25 + hopHeight);
-                    this.bunnyGraphics.lineBetween(-18, -23 + hopHeight, -20, -25 + hopHeight);
-                    this.bunnyGraphics.lineBetween(20, -23 + hopHeight, 22, -25 + hopHeight);
-                    this.bunnyGraphics.lineBetween(18, -23 + hopHeight, 20, -25 + hopHeight);
+                    this.bunnyGraphics.fillCircle(-19, (-19 + hopHeight) * crouchScale, 3);
+                    this.bunnyGraphics.fillCircle(21, (-19 + hopHeight) * crouchScale, 3);
                 }
                 this.bunnyGraphics.fillStyle(0xFFC1CC, 1);
-                this.bunnyGraphics.fillTriangle(0, -6 + hopHeight, -7, -3 + hopHeight, 7, -3 + hopHeight);
-                this.bunnyGraphics.fillEllipse(0, -3 + hopHeight, 14, 7);
-                const whiskerAngle = this.runSpeed / 30;
+                this.bunnyGraphics.fillTriangle(0, (-6 + hopHeight) * crouchScale, -7, (-3 + hopHeight) * crouchScale, 7, (-3 + hopHeight) * crouchScale);
+                this.bunnyGraphics.fillEllipse(0, (-3 + hopHeight) * crouchScale, 14, 7);
+                const whiskerAngle = this.runSpeed / 40;
                 this.bunnyGraphics.lineStyle(1, 0xFFFFFF, 0.9);
-                this.bunnyGraphics.lineBetween(-14, -3 + hopHeight, -35, -3 + whiskerAngle + hopHeight);
-                this.bunnyGraphics.lineBetween(-14, 0 + hopHeight, -33, 3 + whiskerAngle + hopHeight);
-                this.bunnyGraphics.lineBetween(14, -3 + hopHeight, 35, -3 + whiskerAngle + hopHeight);
-                this.bunnyGraphics.lineBetween(14, 0 + hopHeight, 33, 3 + whiskerAngle + hopHeight);
+                this.bunnyGraphics.lineBetween(-14, (-3 + hopHeight) * crouchScale, -35, (-3 + whiskerAngle + hopHeight) * crouchScale);
+                this.bunnyGraphics.lineBetween(-14, (0 + hopHeight) * crouchScale, -33, (3 + whiskerAngle + hopHeight) * crouchScale);
+                this.bunnyGraphics.lineBetween(14, (-3 + hopHeight) * crouchScale, 35, (-3 + whiskerAngle + hopHeight) * crouchScale);
+                this.bunnyGraphics.lineBetween(14, (0 + hopHeight) * crouchScale, 33, (3 + whiskerAngle + hopHeight) * crouchScale);
             }
 
             updateAnimations() {
-                try {
-                    if (this.bunny.body.touching.down && !this.isJumping && Math.abs(this.runSpeed) > 10) {
-                        this.runFrame = (this.runFrame + 1) % 8; // Faster cycle for rabbit run
-                        this.hopCycle = this.runFrame / 8; // Sync with 4-beat cycle
-                        this.bunny.angle = 10 * Math.sin(this.hopCycle * 2 * Math.PI); // More pronounced tilt
-                        // Brief lift-off during mid-hop (Phase 2)
-                        if (Math.floor(this.runFrame / 2) % 4 === 2) {
-                            this.bunny.body.setVelocityY(-200); // Small hop
-                        }
-                    } else {
-                        this.bunny.angle = this.isJumping ? 40 * Math.sin(this.bunny.body.velocity.y / 100) : 0;
+                this.blinkFrame = (this.time.now % 3600 < 120) ? 1 : 0;
+                this.earTwitchFrame = (this.time.now % 3000 < 1000) ? Phaser.Math.Between(1, 2) : 0;
+                this.tailWagFrame = (this.time.now % 600 < 200) ? Phaser.Math.Between(1, 2) : 0;
+                this.updateBunnyGraphics();
+            }
+
+            handleJumpInput() {
+                if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
+                    if (!this.isCrouching) {
+                        // Start crouch animation
+                        this.isCrouching = true;
+                        this.tweens.add({
+                            targets: this.bunny,
+                            scaleY: 0.8,
+                            duration: 100,
+                            onComplete: () => {
+                                if (this.bunny.active) {
+                                    // Perform jump
+                                    const jumpVelocity = -900 - Math.abs(this.runSpeed) * 0.2;
+                                    this.bunny.body.setVelocityY(jumpVelocity);
+                                    this.isJumping = true;
+                                    this.isCrouching = false;
+                                    this.tweens.add({
+                                        targets: this.bunny,
+                                        angle: this.runSpeed > 0 ? 45 : -45,
+                                        scale: { x: 1.3, y: 0.8 },
+                                        duration: 250,
+                                        yoyo: true,
+                                        onComplete: () => {
+                                            if (this.bunny.active) {
+                                                this.bunny.angle = 0;
+                                                this.bunny.scale = 1;
+                                            }
+                                        }
+                                    });
+                                    // Dust effect
+                                    for (let i = 0; i < 12; i++) {
+                                        const dust = this.add.circle(this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 25, 4, 0xA9A9A9, 0.5);
+                                        this.tweens.add({
+                                            targets: dust,
+                                            x: dust.x + Phaser.Math.Between(-30, 30),
+                                            y: dust.y + Phaser.Math.Between(15, 40),
+                                            alpha: 0,
+                                            duration: 500,
+                                            onComplete: () => dust.active && dust.destroy()
+                                        });
+                                    }
+                                }
+                            }
+                        });
                     }
-
-                    this.blinkFrame = (this.time.now % 3600 < 120) ? 1 : 0;
-                    this.earTwitchFrame = (this.time.now % 3000 < 1000) ? Phaser.Math.Between(1, 2) : 0;
-                    this.tailWagFrame = (this.time.now % 600 < 200) ? Phaser.Math.Between(1, 2) : 0;
-                    this.updateBunnyGraphics();
-                } catch (error) {
-                    console.warn('Error updating animations:', error);
                 }
             }
 
-            moveRight() {
-                if (this.bunny.body.touching.down) {
-                    const accel = 1200 + Math.abs(this.bunny.body.velocity.x) * 0.3; // Stronger push
-                    this.bunny.body.setAccelerationX(accel);
+            moveBunny(delta) {
+                let accel = 0;
+                if (this.cursors.right.isDown) {
+                    accel = 1200 + Math.abs(this.bunny.body.velocity.x) * 0.2;
                     this.bunny.scaleX = 1;
-                    this.runSpeed = Math.min(this.speed, this.bunny.body.velocity.x);
-                }
-            }
-
-            moveLeft() {
-                if (this.bunny.body.touching.down) {
-                    const accel = 1200 + Math.abs(this.bunny.body.velocity.x) * 0.3;
-                    this.bunny.body.setAccelerationX(-accel);
+                } else if (this.cursors.left.isDown) {
+                    accel = -1200 - Math.abs(this.bunny.body.velocity.x) * 0.2;
                     this.bunny.scaleX = -1;
-                    this.runSpeed = Math.max(-this.speed, this.bunny.body.velocity.x);
+                } else {
+                    this.bunny.body.setAccelerationX(0);
+                    this.runSpeed = 0;
                 }
+
+                if (accel !== 0 && this.bunny.body.touching.down && !this.isJumping) {
+                    this.bunny.body.setAccelerationX(accel);
+                    this.runSpeed = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed, this.speed);
+                    // Trigger micro-hops
+                    this.hopTimer += delta;
+                    if (this.hopTimer >= this.hopInterval) {
+                        this.bunny.body.setVelocityY(-400); // Small hop
+                        this.hopTimer = 0;
+                    }
+                } else {
+                    this.hopTimer = Math.min(this.hopTimer + delta, this.hopInterval);
+                }
+
+                this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.2, this.speed * 1.2);
             }
 
             spawnObstacle() {
-                try {
-                    const obstacle = this.add.container(850, 500);
-                    const stumpGraphics = this.add.graphics();
-                    stumpGraphics.fillStyle(0x000000, 0.3);
-                    stumpGraphics.fillEllipse(0, 40, 60, 10);
-                    stumpGraphics.fillStyle(0x6B4E31, 1);
-                    stumpGraphics.fillRoundedRect(-35, -60, 70, 100, 20);
-                    stumpGraphics.lineStyle(2, 0x8B4513, 0.6);
-                    for (let y = -50; y < 30; y += 10) {
-                        stumpGraphics.lineBetween(-20, y, 20, y + 5);
-                    }
-                    stumpGraphics.fillStyle(0x228B22, 0.7);
-                    stumpGraphics.fillEllipse(-25, -10, 15, 10);
-                    stumpGraphics.fillEllipse(20, 0, 10, 8);
-                    stumpGraphics.fillStyle(0x6B4E31, 1);
-                    stumpGraphics.fillRect(30, -40, 20, 5);
-                    this.tweens.add({
-                        targets: stumpGraphics,
-                        angle: 5,
-                        duration: 500,
-                        yoyo: true,
-                        repeat: -1
-                    });
-                    obstacle.add(stumpGraphics);
-                    obstacle.setSize(50, 90);
-                    this.physics.add.existing(obstacle);
-                    obstacle.body.setVelocityX(-200);
-                    obstacle.body.setAllowGravity(false);
-
-                    this.physics.add.overlap(this.bunny, obstacle, (bunny, obs) => {
-                        if (!bunny || !obs || !bunny.active || !obs.active) return;
-                        const collisionY = bunny.y + bunny.body.height / 2;
-                        const obstacleTopY = obs.y - obs.body.height / 2;
-                        if (collisionY > obstacleTopY + 30) {
-                            this.gameOver();
-                        }
-                    }, null, this);
-
-                    this.time.addEvent({
-                        delay: 5000,
-                        callback: () => {
-                            if (obstacle && obstacle.active) {
-                                obstacle.destroy();
-                            }
-                        },
-                        callbackScope: this
-                    });
-                } catch (error) {
-                    console.warn('Error spawning obstacle:', error);
+                const obstacle = this.add.container(850, 500);
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0x000000, 0.3);
+                graphics.fillEllipse(0, 40, 60, 10);
+                graphics.fillStyle(0x6B4E31, 1);
+                graphics.fillRoundedRect(-35, -60, 70, 100, 20);
+                graphics.lineStyle(2, 0x8B4513, 0.6);
+                for (let y = -50; y < 30; y += 10) {
+                    graphics.lineBetween(-20, y, 20, y + 5);
                 }
+                graphics.fillStyle(0x228B22, 0.7);
+                graphics.fillEllipse(-25, -10, 15, 10);
+                graphics.fillEllipse(20, 0, 10, 8);
+                obstacle.add(graphics);
+                obstacle.setSize(50, 90);
+                this.physics.add.existing(obstacle);
+                obstacle.body.setVelocityX(-200);
+                obstacle.body.setAllowGravity(false);
+                this.obstacles.add(obstacle);
+
+                this.time.addEvent({
+                    delay: 5000,
+                    callback: () => obstacle.active && obstacle.destroy(),
+                    callbackScope: this
+                });
             }
 
             spawnCarrot() {
-                try {
-                    const carrot = this.add.container(850, Phaser.Math.Between(200, 400));
-                    const carrotGraphics = this.add.graphics();
-                    carrotGraphics.fillStyle(0xFFD700, 0.2);
-                    carrotGraphics.fillEllipse(0, 0, 40, 40);
-                    carrotGraphics.fillStyle(0xFF8C00, 1);
-                    carrotGraphics.fillTriangle(0, -30, -15, 30, 15, 30);
-                    carrotGraphics.lineStyle(1, 0xFFA500, 0.7);
-                    for (let y = -20; y < 20; y += 5) {
-                        carrotGraphics.lineBetween(-10, y, 10, y);
-                    }
-                    carrotGraphics.fillStyle(0x006400, 1);
-                    carrotGraphics.fillTriangle(-12, -40, -7, -25, -2, -35);
-                    carrotGraphics.fillTriangle(2, -40, 7, -25, 12, -35);
-                    this.tweens.add({
-                        targets: carrotGraphics,
-                        angle: 3,
-                        duration: 300,
-                        yoyo: true,
-                        repeat: -1
-                    });
-                    carrot.add(carrotGraphics);
-                    carrot.setSize(30, 60);
-                    this.physics.add.existing(carrot);
-                    carrot.body.setVelocityX(-200);
-                    carrot.body.setAllowGravity(false);
+                const carrot = this.add.container(850, Phaser.Math.Between(200, 400));
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0xFF8C00, 1);
+                graphics.fillTriangle(0, -30, -15, 30, 15, 30);
+                graphics.fillStyle(0x006400, 1);
+                graphics.fillTriangle(-12, -40, -7, -25, -2, -35);
+                graphics.fillTriangle(2, -40, 7, -25, 12, -35);
+                carrot.add(graphics);
+                carrot.setSize(30, 60);
+                this.physics.add.existing(carrot);
+                carrot.body.setVelocityX(-200);
+                carrot.body.setAllowGravity(false);
+                this.carrotsGroup.add(carrot);
 
-                    this.physics.add.overlap(this.bunny, carrot, () => {
-                        this.collectCarrot(carrot);
-                    }, null, this);
-
-                    this.time.addEvent({
-                        delay: 5000,
-                        callback: () => {
-                            if (carrot && carrot.active) {
-                                carrot.destroy();
-                            }
-                        },
-                        callbackScope: this
-                    });
-                } catch (error) {
-                    console.warn('Error spawning carrot:', error);
-                }
+                this.time.addEvent({
+                    delay: 5000,
+                    callback: () => carrot.active && carrot.destroy(),
+                    callbackScope: this
+                });
             }
 
             spawnPlatform() {
-                try {
-                    const x = 850;
-                    const y = Phaser.Math.Between(300, 450);
-                    const platform = this.add.container(x, y);
-                    const platformGraphics = this.add.graphics();
-                    platformGraphics.fillStyle(0x8B4513, 1);
-                    platformGraphics.fillRect(-50, -20, 100, 40);
-                    platformGraphics.lineStyle(2, 0xA0522D, 1);
-                    platformGraphics.strokeRect(-50, -20, 100, 40);
-                    platform.add(platformGraphics);
-                    platform.setSize(100, 40);
-                    this.physics.add.existing(platform);
-                    platform.body.setVelocityX(-200);
-                    platform.body.setImmovable(true);
-                    this.platforms.add(platform);
+                const platform = this.add.container(850, Phaser.Math.Between(300, 450));
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0x8B4513, 1);
+                graphics.fillRect(-50, -20, 100, 40);
+                platform.add(graphics);
+                platform.setSize(100, 40);
+                this.physics.add.existing(platform);
+                platform.body.setVelocityX(-200);
+                platform.body.setImmovable(true);
+                this.platforms.add(platform);
 
-                    this.time.addEvent({
-                        delay: 6000,
-                        callback: () => {
-                            if (platform && platform.active) {
-                                platform.destroy();
-                            }
-                        },
-                        callbackScope: this
-                    });
-                } catch (error) {
-                    console.warn('Error spawning platform:', error);
-                }
+                this.time.addEvent({
+                    delay: 6000,
+                    callback: () => platform.active && platform.destroy(),
+                    callbackScope: this
+                });
             }
 
             spawnWall() {
-                try {
-                    const x = 850;
-                    const height = Phaser.Math.Between(100, 200);
-                    const y = 500 - height / 2;
-                    const wall = this.add.container(x, y);
-                    const wallGraphics = this.add.graphics();
-                    wallGraphics.lineStyle(1, 0x000000, 0.3);
-                    wallGraphics.fillStyle(0x8B4513, 1);
-                    const brickHeight = 20;
-                    const brickWidth = 40;
-                    const wallWidth = 40;
-                    for (let h = 0; h < height; h += brickHeight) {
-                        const offset = (h / brickHeight % 2) * (brickWidth / 2);
-                        for (let w = -wallWidth/2; w < wallWidth/2; w += brickWidth) {
-                            wallGraphics.fillStyle(Phaser.Math.Between(0, 1) ? 0x8B4513 : 0x966F33, 1);
-                            wallGraphics.fillRect(w + offset, h - height/2, brickWidth, brickHeight);
-                            wallGraphics.strokeRect(w + offset, h - height/2, brickWidth, brickHeight);
-                        }
+                const height = Phaser.Math.Between(100, 200);
+                const wall = this.add.container(850, 500 - height / 2);
+                const graphics = this.add.graphics();
+                graphics.fillStyle(0x8B4513, 1);
+                const brickHeight = 20;
+                const brickWidth = 40;
+                const wallWidth = 40;
+                for (let h = 0; h < height; h += brickHeight) {
+                    const offset = (h / brickHeight % 2) * (brickWidth / 2);
+                    for (let w = -wallWidth / 2; w < wallWidth / 2; w += brickWidth) {
+                        graphics.fillRect(w + offset, h - height / 2, brickWidth, brickHeight);
                     }
-                    wallGraphics.lineStyle(2, 0xFFFFFF, 0.2);
-                    wallGraphics.lineBetween(-wallWidth/2, -height/2, -wallWidth/2, height/2);
-                    wallGraphics.lineStyle(2, 0x000000, 0.2);
-                    wallGraphics.lineBetween(wallWidth/2, -height/2, wallWidth/2, height/2);
-                    wall.add(wallGraphics);
-                    wall.setSize(wallWidth, height);
-                    this.physics.add.existing(wall);
-                    wall.body.setVelocityX(-200);
-                    wall.body.setImmovable(true);
-                    this.walls.add(wall);
-
-                    this.time.addEvent({
-                        delay: 6000,
-                        callback: () => {
-                            if (wall && wall.active) {
-                                wall.destroy();
-                            }
-                        },
-                        callbackScope: this
-                    });
-                } catch (error) {
-                    console.warn('Error spawning wall:', error);
                 }
+                wall.add(graphics);
+                wall.setSize(wallWidth, height);
+                this.physics.add.existing(wall);
+                wall.body.setVelocityX(-200);
+                wall.body.setImmovable(true);
+                this.walls.add(wall);
+
+                this.time.addEvent({
+                    delay: 6000,
+                    callback: () => wall.active && wall.destroy(),
+                    callbackScope: this
+                });
             }
 
-            collectCarrot(carrot) {
-                if (!carrot || !carrot.active) return;
-
+            collectCarrot(bunny, carrot) {
+                if (!carrot.active) return;
                 const carrotX = carrot.x;
                 const carrotY = carrot.y;
                 carrot.destroy();
-
                 this.carrots++;
                 this.carrotText.setText('Carrots: ' + this.carrots);
 
-                const sparkle = this.add.graphics();
-                sparkle.setPosition(carrotX, carrotY);
+                const sparkle = this.add.graphics().setPosition(carrotX, carrotY);
                 sparkle.fillStyle(0xFFD700, 1);
-                const numParticles = 8;
-                for (let i = 0; i < numParticles; i++) {
-                    const angle = (i / numParticles) * Math.PI * 2;
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
                     const distance = Phaser.Math.Between(5, 15);
-                    const x = Math.cos(angle) * distance;
-                    const y = Math.sin(angle) * distance;
-                    sparkle.fillCircle(x, y, 3);
+                    sparkle.fillCircle(Math.cos(angle) * distance, Math.sin(angle) * distance, 3);
                 }
                 this.tweens.add({
                     targets: sparkle,
                     alpha: 0,
                     scale: 1.5,
                     duration: 500,
-                    onComplete: () => {
-                        if (sparkle && sparkle.active) {
-                            sparkle.destroy();
-                        }
-                    }
+                    onComplete: () => sparkle.active && sparkle.destroy()
                 });
 
-                try {
-                    const tints = [
-                        { carrots: 5, color: 0xFF6B6B },
-                        { carrots: 10, color: 0x343A40 },
-                        { carrots: 15, color: 0xFF8FAB }
-                    ];
-                    const tint = tints.find(t => t.carrots === this.carrots);
-                    if (tint && this.bunnyGraphics && this.bunnyGraphics.active) {
-                        this.bunnyGraphics.setTint(tint.color);
-                        if (this.leftEarGraphics && this.leftEarGraphics.active) {
-                            this.leftEarGraphics.setTint(tint.color);
-                        }
-                        if (this.rightEarGraphics && this.rightEarGraphics.active) {
-                            this.rightEarGraphics.setTint(tint.color);
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Error applying tint:', error);
+                const tints = [
+                    { carrots: 5, color: 0xFF6B6B },
+                    { carrots: 10, color: 0x343A40 },
+                    { carrots: 15, color: 0xFF8FAB }
+                ];
+                const tint = tints.find(t => t.carrots === this.carrots);
+                if (tint) {
+                    this.bunnyGraphics.setTint(tint.color);
+                    this.leftEarGraphics.setTint(tint.color);
+                    this.rightEarGraphics.setTint(tint.color);
                 }
             }
 
-            jump() {
-                try {
-                    if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
-                        const jumpVelocity = -900 - Math.abs(this.runSpeed) * 0.3;
-                        this.bunny.body.setVelocityY(jumpVelocity);
-                        this.isJumping = true;
-                        this.tweens.add({
-                            targets: this.bunny,
-                            angle: this.runSpeed > 0 ? 45 : -45,
-                            scale: { x: 1.3, y: 0.8 },
-                            duration: 250,
-                            yoyo: true,
-                            onComplete: () => {
-                                if (this.bunny && this.bunny.active) {
-                                    this.bunny.angle = 0;
-                                    this.bunny.scale = 1;
-                                }
-                            }
-                        });
-                        const dust = this.add.graphics();
-                        dust.fillStyle(0xA9A9A9, 0.5);
-                        for (let i = 0; i < 12; i++) {
-                            const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 25, 4, 0xA9A9A9, 0.5);
-                            this.tweens.add({
-                                targets: dustParticle,
-                                x: dustParticle.x + Phaser.Math.Between(-30, 30),
-                                y: dustParticle.y + Phaser.Math.Between(15, 40),
-                                alpha: 0,
-                                duration: 500,
-                                onComplete: () => {
-                                    if (dustParticle && dustParticle.active) {
-                                        dustParticle.destroy();
-                                    }
-                                }
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.warn('Error handling jump:', error);
+            checkObstacleCollision(bunny, obstacle) {
+                if (!bunny.active || !obstacle.active) return;
+                const collisionY = bunny.y + bunny.body.height / 2;
+                const obstacleTopY = obstacle.y - obstacle.body.height / 2;
+                if (collisionY > obstacleTopY + 30) {
+                    this.gameOver();
                 }
             }
 
             gameOver() {
-                try {
-                    this.physics.pause();
-                    this.scene.start('GameOverScene', {
-                        score: this.score,
-                        carrots: this.carrots,
-                        difficulty: this.difficulty
-                    });
-                } catch (error) {
-                    console.warn('Error in gameOver:', error);
-                }
+                this.physics.pause();
+                this.scene.start('GameOverScene', {
+                    score: this.score,
+                    carrots: this.carrots,
+                    difficulty: this.difficulty
+                });
             }
 
             update(time, delta) {
-                try {
-                    if (this.bunny.body.touching.down) {
-                        this.lastGroundTime = time;
-                    }
-
-                    if (this.cursors.right.isDown) {
-                        this.moveRight();
-                    } else if (this.cursors.left.isDown) {
-                        this.moveLeft();
-                    } else {
-                        this.bunny.body.setAccelerationX(0);
-                        this.bunny.body.setDragX(2000); // Even higher drag to stop
-                        this.runSpeed = 0;
-                    }
-
-                    this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.2, this.speed * 1.2);
-                    this.runSpeed = this.bunny.body.velocity.x;
-
-                    if (!this.bunny.body.touching.down) {
-                        this.score += delta / 1000 * 10;
-                        this.scoreText.setText('Score: ' + Math.floor(this.score));
-                    } else if (this.isJumping) {
+                if (this.bunny.body.touching.down) {
+                    this.lastGroundTime = time;
+                    if (this.isJumping) {
                         this.isJumping = false;
                         this.tweens.add({
                             targets: this.bunny,
@@ -664,23 +503,21 @@
                             scale: { x: 1.2, y: 0.8 },
                             duration: 150,
                             yoyo: true,
-                            onComplete: () => {
-                                if (this.bunny && this.bunny.active) {
-                                    this.bunny.scale = 1;
-                                }
-                            }
+                            onComplete: () => this.bunny.active && (this.bunny.scale = 1)
                         });
                     }
-
-                    this.groundOffset += 2;
-                    this.hillsGraphics.x -= 0.5;
-                    this.bushesGraphics.x -= 1;
-                    if (this.hillsGraphics.x < -400) this.hillsGraphics.x += 800;
-                    if (this.bushesGraphics.x < -400) this.bushesGraphics.x += 800;
-                    this.drawGround();
-                } catch (error) {
-                    console.warn('Error in update:', error);
                 }
+
+                this.moveBunny(delta);
+
+                if (!this.bunny.body.touching.down) {
+                    this.score += delta / 1000 * 10;
+                    this.scoreText.setText('Score: ' + Math.floor(this.score));
+                }
+
+                this.backgroundGraphics.x -= 0.5;
+                if (this.backgroundGraphics.x < -400) this.backgroundGraphics.x += 800;
+                this.drawGround();
             }
         }
 
@@ -690,9 +527,9 @@
             }
 
             create() {
-                const skyGraphics = this.add.graphics();
-                skyGraphics.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
-                skyGraphics.fillRect(0, 0, 800, 600);
+                const sky = this.add.graphics();
+                sky.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
+                sky.fillRect(0, 0, 800, 600);
 
                 for (let i = 0; i < 5; i++) {
                     const cloud = this.add.graphics();
@@ -712,8 +549,7 @@
                     });
                 }
 
-                const bunny = this.add.graphics();
-                bunny.setPosition(400, 200);
+                const bunny = this.add.graphics().setPosition(400, 200);
                 bunny.fillStyle(0xFFFFFF, 1);
                 bunny.fillCircle(0, 0, 40);
                 bunny.fillCircle(-20, -50, 15);
@@ -724,7 +560,7 @@
                 bunny.strokeCircle(-20, -15, 8);
                 bunny.strokeCircle(20, -15, 8);
 
-                const titleGlow = this.add.text(400, 100, 'Bunny Hop', {
+                this.add.text(400, 100, 'Bunny Hop', {
                     fontSize: '72px',
                     fontFamily: 'Arial Black',
                     color: '#fff',
@@ -737,16 +573,7 @@
                 controlsBox.fillStyle(0x000000, 0.3);
                 controlsBox.fillRoundedRect(200, 260, 400, 160, 20);
 
-                const controls = [
-                    '🎮 Controls',
-                    '',
-                    '⌨️ Space/Click - Jump',
-                    '⌨️ Left/Right - Move',
-                    '',
-                    '🥕 Collect carrots for powers!'
-                ].join('\n');
-
-                this.add.text(400, 340, controls, {
+                this.add.text(400, 340, ['🎮 Controls', '', '⌨️ Space/Click - Jump', '⌨️ Left/Right - Move', '', '🥕 Collect carrots!'].join('\n'), {
                     fontSize: '24px',
                     fontFamily: 'Arial',
                     color: '#fff',
@@ -754,17 +581,11 @@
                     lineSpacing: 15
                 }).setOrigin(0.5);
 
-                const startButton = this.add.graphics();
-                startButton.setPosition(400, 520);
+                const startButton = this.add.graphics().setPosition(400, 520);
                 startButton.lineStyle(4, 0xFFFFFF, 1);
                 startButton.fillStyle(0x0d47a1, 0.9);
                 startButton.fillRoundedRect(-120, -30, 240, 60, 30);
                 startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-
-                const glowButton = this.add.graphics();
-                glowButton.setPosition(400, 520);
-                glowButton.lineStyle(8, 0xFFFFFF, 0.3);
-                glowButton.strokeRoundedRect(-120, -30, 240, 60, 30);
 
                 const startText = this.add.text(400, 520, 'TAP TO BEGIN', {
                     fontSize: '32px',
@@ -774,57 +595,16 @@
                     strokeThickness: 6
                 }).setOrigin(0.5);
 
-                this.tweens.add({
-                    targets: glowButton,
-                    alpha: { from: 0.1, to: 0.5 },
-                    duration: 1200,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-
-                this.tweens.add({
-                    targets: [startButton, startText],
-                    scaleX: 1.05,
-                    scaleY: 1.05,
-                    duration: 1200,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-
                 startButton.setInteractive(new Phaser.Geom.Rectangle(-100, -25, 200, 50), Phaser.Geom.Rectangle.Contains);
                 startText.setInteractive();
 
-                const startGame = () => this.startGame();
+                const startGame = () => this.scene.start('OptionsScene');
                 startButton.on('pointerdown', startGame);
                 startText.on('pointerdown', startGame);
 
-                startButton.on('pointerover', () => {
-                    startButton.clear();
-                    startButton.lineStyle(4, 0xFFFFFF, 1);
-                    startButton.fillStyle(0x1565c0, 0.9);
-                    startButton.fillRoundedRect(-120, -30, 240, 60, 30);
-                    startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-                    startText.setStyle({ stroke: '#1e88e5' });
-                });
-
-                startButton.on('pointerout', () => {
-                    startButton.clear();
-                    startButton.lineStyle(4, 0xFFFFFF, 1);
-                    startButton.fillStyle(0x0d47a1, 0.9);
-                    startButton.fillRoundedRect(-120, -30, 240, 60, 30);
-                    startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-                    startText.setStyle({ stroke: '#1565c0' });
-                });
-
-                this.input.on('pointerdown', () => this.startGame());
-                this.input.keyboard.on('keydown-SPACE', () => this.startGame());
-                this.input.keyboard.on('keydown-ENTER', () => this.startGame());
-            }
-
-            startGame() {
-                this.scene.start('OptionsScene');
+                this.input.on('pointerdown', startGame);
+                this.input.keyboard.on('keydown-SPACE', startGame);
+                this.input.keyboard.on('keydown-ENTER', startGame);
             }
         }
 
@@ -834,9 +614,9 @@
             }
 
             create() {
-                const skyGraphics = this.add.graphics();
-                skyGraphics.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
-                skyGraphics.fillRect(0, 0, 800, 600);
+                const sky = this.add.graphics();
+                sky.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
+                sky.fillRect(0, 0, 800, 600);
 
                 for (let i = 0; i < 5; i++) {
                     const cloud = this.add.graphics();
@@ -865,10 +645,6 @@
                     shadow: { color: '#4a90e2', blur: 20, stroke: true, fill: true }
                 }).setOrigin(0.5);
 
-                const container = this.add.graphics();
-                container.fillStyle(0x000000, 0.3);
-                container.fillRoundedRect(200, 180, 400, 400, 20);
-
                 const difficulties = [
                     { level: 1, name: 'Easy Hop', color: 0x4CAF50, desc: 'Perfect for beginners' },
                     { level: 2, name: 'Normal Bounce', color: 0x2196F3, desc: 'Standard challenge' },
@@ -879,12 +655,11 @@
 
                 difficulties.forEach((diff, index) => {
                     const y = 230 + index * 70;
-                    const buttonBg = this.add.graphics();
-                    buttonBg.setPosition(400, y);
-                    buttonBg.lineStyle(3, 0xFFFFFF, 0.8);
-                    buttonBg.fillStyle(diff.color, 0.2);
-                    buttonBg.fillRoundedRect(-160, -25, 320, 50, 15);
-                    buttonBg.strokeRoundedRect(-160, -25, 320, 50, 15);
+                    const button = this.add.graphics().setPosition(400, y);
+                    button.lineStyle(3, 0xFFFFFF, 0.8);
+                    button.fillStyle(diff.color, 0.2);
+                    button.fillRoundedRect(-160, -25, 320, 50, 15);
+                    button.strokeRoundedRect(-160, -25, 320, 50, 15);
 
                     const text = this.add.text(400, y - 10, diff.name, {
                         fontSize: '24px',
@@ -894,39 +669,35 @@
                         strokeThickness: 4
                     }).setOrigin(0.5);
 
-                    const descText = this.add.text(400, y + 15, diff.desc, {
+                    const desc = this.add.text(400, y + 15, diff.desc, {
                         fontSize: '16px',
                         fontFamily: 'Arial',
                         color: '#ccc'
                     }).setOrigin(0.5);
 
-                    buttonBg.setInteractive(new Phaser.Geom.Rectangle(-160, -25, 320, 50), Phaser.Geom.Rectangle.Contains)
+                    button.setInteractive(new Phaser.Geom.Rectangle(-160, -25, 320, 50), Phaser.Geom.Rectangle.Contains)
                         .on('pointerover', () => {
-                            buttonBg.clear();
-                            buttonBg.lineStyle(3, 0xFFFFFF, 1);
-                            buttonBg.fillStyle(diff.color, 0.4);
-                            buttonBg.fillRoundedRect(-160, -25, 320, 50, 15);
-                            buttonBg.strokeRoundedRect(-160, -25, 320, 50, 15);
+                            button.clear();
+                            button.lineStyle(3, 0xFFFFFF, 1);
+                            button.fillStyle(diff.color, 0.4);
+                            button.fillRoundedRect(-160, -25, 320, 50, 15);
+                            button.strokeRoundedRect(-160, -25, 320, 50, 15);
                             text.setScale(1.05);
-                            descText.setScale(1.05);
+                            desc.setScale(1.05);
                         })
                         .on('pointerout', () => {
-                            buttonBg.clear();
-                            buttonBg.lineStyle(3, 0xFFFFFF, 0.8);
-                            buttonBg.fillStyle(diff.color, 0.2);
-                            buttonBg.fillRoundedRect(-160, -25, 320, 50, 15);
-                            buttonBg.strokeRoundedRect(-160, -25, 320, 50, 15);
+                            button.clear();
+                            button.lineStyle(3, 0xFFFFFF, 0.8);
+                            button.fillStyle(diff.color, 0.2);
+                            button.fillRoundedRect(-160, -25, 320, 50, 15);
+                            button.strokeRoundedRect(-160, -25, 320, 50, 15);
                             text.setScale(1);
-                            descText.setScale(1);
+                            desc.setScale(1);
                         })
-                        .on('pointerdown', () => this.startGame(diff.level));
-                });
-            }
-
-            startGame(difficulty) {
-                this.cameras.main.fade(500, 0, 0, 0);
-                this.time.delayedCall(500, () => {
-                    this.scene.start('GameScene', { difficulty });
+                        .on('pointerdown', () => {
+                            this.cameras.main.fade(500, 0, 0, 0);
+                            this.time.delayedCall(500, () => this.scene.start('GameScene', { difficulty: diff.level }));
+                        });
                 });
             }
         }
@@ -943,9 +714,9 @@
             }
 
             create() {
-                const skyGraphics = this.add.graphics();
-                skyGraphics.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0FFFF, 0xE0FFFF, 1);
-                skyGraphics.fillRect(0, 0, 800, 600);
+                const sky = this.add.graphics();
+                sky.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0FFFF, 0xE0FFFF, 1);
+                sky.fillRect(0, 0, 800, 600);
 
                 this.add.text(400, 150, 'Game Over!', {
                     fontSize: '64px',
@@ -981,18 +752,14 @@
                     .setInteractive({ useHandCursor: true })
                     .on('pointerover', () => replayButton.setScale(1.1))
                     .on('pointerout', () => replayButton.setScale(1))
-                    .on('pointerdown', () => {
-                        this.scene.start('GameScene', { difficulty: this.difficulty });
-                    });
+                    .on('pointerdown', () => this.scene.start('GameScene', { difficulty: this.difficulty }));
 
-                const quizButton = this.add.text(400, 420, 'Try Different Level', buttonStyle)
+                const optionsButton = this.add.text(400, 420, 'Try Different Level', buttonStyle)
                     .setOrigin(0.5)
                     .setInteractive({ useHandCursor: true })
-                    .on('pointerover', () => quizButton.setScale(1.1))
-                    .on('pointerout', () => quizButton.setScale(1))
-                    .on('pointerdown', () => {
-                        this.scene.start('OptionsScene');
-                    });
+                    .on('pointerover', () => optionsButton.setScale(1.1))
+                    .on('pointerout', () => optionsButton.setScale(1))
+                    .on('pointerdown', () => this.scene.start('OptionsScene'));
             }
         }
 
