@@ -35,8 +35,8 @@
                 this.blinkFrame = 0;
                 this.earTwitchFrame = 0;
                 this.tailWagFrame = 0;
-                this.wallDelay = 4000; // Time between wall spawns
-                this.coyoteTime = 100; // Define coyote time for jump leniency
+                this.wallDelay = 4000;
+                this.coyoteTime = 100; // Define coyote time (in ms)
             }
 
             init(data) {
@@ -56,7 +56,7 @@
             }
 
             preload() {
-                // No external assets; all graphics generated in create()
+                // No external assets
             }
 
             create() {
@@ -69,7 +69,7 @@
                 this.leftEarGraphics = this.add.graphics();
                 this.rightEarGraphics = this.add.graphics();
 
-                // Draw static background elements
+                // Draw static background
                 this.drawSky();
                 this.drawBackground();
 
@@ -95,16 +95,16 @@
                 this.bunny.body.setDragX(800);
                 this.updateBunnyGraphics();
 
-                // Create physics groups
+                // Create groups
                 this.platforms = this.physics.add.group({ allowGravity: false, immovable: true });
-                this.walls = this.physics.add.group({ allowGravity: false, immovable: true }); // Initialize walls group
+                this.walls = this.physics.add.group({ allowGravity: false, immovable: true });
                 this.obstacles = this.physics.add.group({ allowGravity: false });
                 this.carrots = this.physics.add.group({ allowGravity: false });
 
                 // Set up collisions
                 this.physics.add.collider(this.bunny, this.ground);
                 this.physics.add.collider(this.bunny, this.platforms);
-                this.physics.add.collider(this.bunny, this.walls); // Wall collision
+                this.physics.add.collider(this.bunny, this.walls);
                 this.physics.add.overlap(this.bunny, this.obstacles, this.handleObstacleCollision, null, this);
                 this.physics.add.overlap(this.bunny, this.carrots, this.collectCarrot, null, this);
 
@@ -383,7 +383,7 @@
                 carrotGraphics.fillEllipse(0, 0, 40, 40);
                 carrotGraphics.fillStyle(0xFF8C00, 1);
                 carrotGraphics.fillTriangle(0, -30, -15, 30, 15, 30);
-                carrotGraphics.lineStyle demanding(1, 0xFFA500, 0.7);
+                carrotGraphics.lineStyle(1, 0xFFA500, 0.7);
                 for (let y = -20; y < 20; y += 5) {
                     carrotGraphics.lineBetween(-10, y, 10, y);
                 }
@@ -438,43 +438,36 @@
                 });
             }
 
-            // Restored and fixed spawnWall logic
             spawnWall() {
                 const x = 850;
-                const height = Phaser.Math.Between(100, 200); // Random height between 100-200px
-                const y = 500 - height / 2; // Position from ground up
+                const height = Phaser.Math.Between(100, 200);
+                const y = 500 - height / 2;
                 const wall = this.add.container(x, y);
                 const wallGraphics = this.add.graphics();
-                
-                // Brick pattern (original logic preserved)
                 wallGraphics.lineStyle(1, 0x000000, 0.3);
                 wallGraphics.fillStyle(0x8B4513, 1);
                 const brickHeight = 20;
                 const brickWidth = 40;
                 const wallWidth = 40;
                 for (let h = 0; h < height; h += brickHeight) {
-                    const offset = (h / brickHeight % 2) * (brickWidth / 2); // Offset every other row
+                    const offset = (h / brickHeight % 2) * (brickWidth / 2);
                     for (let w = -wallWidth / 2; w < wallWidth / 2; w += brickWidth) {
                         wallGraphics.fillStyle(Phaser.Math.Between(0, 1) ? 0x8B4513 : 0x966F33, 1);
                         wallGraphics.fillRect(w + offset, h - height / 2, brickWidth, brickHeight);
                         wallGraphics.strokeRect(w + offset, h - height / 2, brickWidth, brickHeight);
                     }
                 }
-                
-                // Add highlight/shadow (original logic preserved)
                 wallGraphics.lineStyle(2, 0xFFFFFF, 0.2);
-                wallGraphics.lineBetween(-wallWidth / 2, -height / 2, -wallWidth / 2, height / 2); // Left highlight
+                wallGraphics.lineBetween(-wallWidth / 2, -height / 2, -wallWidth / 2, height / 2);
                 wallGraphics.lineStyle(2, 0x000000, 0.2);
-                wallGraphics.lineBetween(wallWidth / 2, -height / 2, wallWidth / 2, height / 2); // Right shadow
-                
+                wallGraphics.lineBetween(wallWidth / 2, -height / 2, wallWidth / 2, height / 2);
                 wall.add(wallGraphics);
                 wall.setSize(wallWidth, height);
                 this.physics.add.existing(wall);
                 wall.body.setVelocityX(-200);
                 wall.body.setImmovable(true);
-                this.walls.add(wall); // Now safe due to initialized this.walls
-                
-                // Cleanup after wall moves off screen
+                this.walls.add(wall);
+
                 this.time.addEvent({
                     delay: 6000,
                     callback: () => {
@@ -499,8 +492,6 @@
                 sparkle.fillStyle(0xFFD700, 1);
                 const numParticles = 8;
                 for (let i = 0; i < numParticles; i++) {
-
-                    
                     const angle = (i / numParticles) * Math.PI * 2;
                     const distance = Phaser.Math.Between(5, 15);
                     const x = Math.cos(angle) * distance;
