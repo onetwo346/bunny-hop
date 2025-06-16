@@ -36,7 +36,7 @@
                 this.earTwitchFrame = 0;
                 this.tailWagFrame = 0;
                 this.wallDelay = 4000;
-                this.coyoteTime = 100; // Define coyote time (in ms)
+                this.coyoteTime = 100; // Define coyote time (ms) for jump leniency
             }
 
             init(data) {
@@ -56,7 +56,7 @@
             }
 
             preload() {
-                // No external assets
+                // No external assets; all graphics generated in create()
             }
 
             create() {
@@ -69,7 +69,7 @@
                 this.leftEarGraphics = this.add.graphics();
                 this.rightEarGraphics = this.add.graphics();
 
-                // Draw static background
+                // Draw static background elements
                 this.drawSky();
                 this.drawBackground();
 
@@ -96,17 +96,19 @@
                 this.updateBunnyGraphics();
 
                 // Create groups
-                this.platforms = this.physics.add.group({ allowGravity: false, immovable: true });
-                this.walls = this.physics.add.group({ allowGravity: false, immovable: true });
-                this.obstacles = this.physics.add.group({ allowGravity: false });
-                this.carrots = this.physics.add.group({ allowGravity: false });
+                this.platforms = this.physics.add.group({
+                    allowGravity: false,
+                    immovable: true
+                });
+                this.walls = this.physics.add.group({ // Initialize walls group
+                    allowGravity: false,
+                    immovable: true
+                });
 
                 // Set up collisions
                 this.physics.add.collider(this.bunny, this.ground);
                 this.physics.add.collider(this.bunny, this.platforms);
                 this.physics.add.collider(this.bunny, this.walls);
-                this.physics.add.overlap(this.bunny, this.obstacles, this.handleObstacleCollision, null, this);
-                this.physics.add.overlap(this.bunny, this.carrots, this.collectCarrot, null, this);
 
                 // Input handling
                 this.cursors = this.input.keyboard.createCursorKeys();
@@ -125,36 +127,28 @@
                     fontStyle: 'bold'
                 });
 
-                // Timed events with error handling
+                // Timed events
                 this.time.addEvent({
                     delay: this.obstacleDelay,
-                    callback: () => {
-                        try { this.spawnObstacle(); } catch (e) { console.error('Obstacle spawn error:', e); }
-                    },
+                    callback: this.spawnObstacle,
                     callbackScope: this,
                     loop: true
                 });
                 this.time.addEvent({
                     delay: this.carrotDelay,
-                    callback: () => {
-                        try { this.spawnCarrot(); } catch (e) { console.error('Carrot spawn error:', e); }
-                    },
+                    callback: this.spawnCarrot,
                     callbackScope: this,
                     loop: true
                 });
                 this.time.addEvent({
                     delay: this.platformDelay,
-                    callback: () => {
-                        try { this.spawnPlatform(); } catch (e) { console.error('Platform spawn error:', e); }
-                    },
+                    callback: this.spawnPlatform,
                     callbackScope: this,
                     loop: true
                 });
                 this.time.addEvent({
                     delay: this.wallDelay,
-                    callback: () => {
-                        try { this.spawnWall(); } catch (e) { console.error('Wall spawn error:', e); }
-                    },
+                    callback: this.spawnWall,
                     callbackScope: this,
                     loop: true
                 });
@@ -172,23 +166,27 @@
             }
 
             spawnCloud() {
-                const cloud = this.add.graphics();
-                cloud.fillStyle(0xFFFFFF, 0.8);
-                cloud.fillEllipse(850, Phaser.Math.Between(50, 150), 60, 30);
-                cloud.fillEllipse(870, Phaser.Math.Between(50, 150), 50, 25);
-                this.clouds.push(cloud);
-                this.tweens.add({
-                    targets: cloud,
-                    x: -100,
-                    duration: 20000,
-                    onComplete: () => {
-                        if (cloud) {
-                            cloud.destroy();
-                            this.clouds = this.clouds.filter(c => c !== cloud);
-                            this.spawnCloud();
+                try {
+                    const cloud = this.add.graphics();
+                    cloud.fillStyle(0xFFFFFF, 0.8);
+                    cloud.fillEllipse(850, Phaser.Math.Between(50, 150), 60, 30);
+                    cloud.fillEllipse(870, Phaser.Math.Between(50, 150), 50, 25);
+                    this.clouds.push(cloud);
+                    this.tweens.add({
+                        targets: cloud,
+                        x: -100,
+                        duration: 20000,
+                        onComplete: () => {
+                            if (cloud && cloud.active) {
+                                cloud.destroy();
+                                this.clouds = this.clouds.filter(c => c !== cloud);
+                                this.spawnCloud();
+                            }
                         }
-                    }
-                });
+                    });
+                } catch (error) {
+                    console.warn('Error spawning cloud:', error);
+                }
             }
 
             drawBackground() {
@@ -213,6 +211,7 @@
             }
 
             updateBunnyGraphics() {
+                // Consider using sprites for better performance
                 this.bunnyGraphics.clear();
                 this.leftEarGraphics.clear();
                 this.rightEarGraphics.clear();
@@ -303,17 +302,21 @@
             }
 
             updateAnimations() {
-                if (this.bunny.body.touching.down && !this.isJumping && Math.abs(this.bunny.body.velocity.x) > 10) {
-                    this.runFrame = (this.runFrame + 1) % 10;
-                    this.bunny.angle = 7 * Math.sin(this.runFrame * Math.PI / 5);
-                } else {
-                    this.bunny.angle = this.isJumping ? 40 * Math.sin(this.bunny.body.velocity.y / 100) : 0;
-                }
+                try {
+                    if (this.bunny.body.touching.down && !this.isJumping && Math.abs(this.bunny.body.velocity.x) > 10) {
+                        this.runFrame = (this.runFrame + 1) % 10;
+                        this.bunny.angle = 7 * Math.sin(this.runFrame * Math.PI / 5);
+                    } else {
+                        this.bunny.angle = this.isJumping ? 40 * Math.sin(this.bunny.body.velocity.y / 100) : 0;
+                    }
 
-                this.blinkFrame = (this.time.now % 3600 < 120) ? 1 : 0;
-                this.earTwitchFrame = (this.time.now % 3000 < 1000) ? Phaser.Math.Between(1, 2) : 0;
-                this.tailWagFrame = (this.time.now % 600 < 200) ? Phaser.Math.Between(1, 2) : 0;
-                this.updateBunnyGraphics();
+                    this.blinkFrame = (this.time.now % 3600 < 120) ? 1 : 0;
+                    this.earTwitchFrame = (this.time.now % 3000 < 1000) ? Phaser.Math.Between(1, 2) : 0;
+                    this.tailWagFrame = (this.time.now % 600 < 200) ? Phaser.Math.Between(1, 2) : 0;
+                    this.updateBunnyGraphics();
+                } catch (error) {
+                    console.warn('Error updating animations:', error);
+                }
             }
 
             moveRight() {
@@ -329,155 +332,181 @@
             }
 
             spawnObstacle() {
-                const obstacle = this.add.container(850, 500);
-                const stumpGraphics = this.add.graphics();
-                stumpGraphics.fillStyle(0x000000, 0.3);
-                stumpGraphics.fillEllipse(0, 40, 60, 10);
-                stumpGraphics.fillStyle(0x6B4E31, 1);
-                stumpGraphics.fillRoundedRect(-35, -60, 70, 100, 20);
-                stumpGraphics.lineStyle(2, 0x8B4513, 0.6);
-                for (let y = -50; y < 30; y += 10) {
-                    stumpGraphics.lineBetween(-20, y, 20, y + 5);
-                }
-                stumpGraphics.fillStyle(0x228B22, 0.7);
-                stumpGraphics.fillEllipse(-25, -10, 15, 10);
-                stumpGraphics.fillEllipse(20, 0, 10, 8);
-                stumpGraphics.fillStyle(0x6B4E31, 1);
-                stumpGraphics.fillRect(30, -40, 20, 5);
-                this.tweens.add({
-                    targets: stumpGraphics,
-                    angle: 5,
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
-                obstacle.add(stumpGraphics);
-                obstacle.setSize(50, 90);
-                this.physics.add.existing(obstacle);
-                obstacle.body.setVelocityX(-200);
-                obstacle.body.setAllowGravity(false);
-                this.obstacles.add(obstacle);
+                try {
+                    const obstacle = this.add.container(850, 500);
+                    const stumpGraphics = this.add.graphics();
+                    stumpGraphics.fillStyle(0x000000, 0.3);
+                    stumpGraphics.fillEllipse(0, 40, 60, 10);
+                    stumpGraphics.fillStyle(0x6B4E31, 1);
+                    stumpGraphics.fillRoundedRect(-35, -60, 70, 100, 20);
+                    stumpGraphics.lineStyle(2, 0x8B4513, 0.6);
+                    for (let y = -50; y < 30; y += 10) {
+                        stumpGraphics.lineBetween(-20, y, 20, y + 5);
+                    }
+                    stumpGraphics.fillStyle(0x228B22, 0.7);
+                    stumpGraphics.fillEllipse(-25, -10, 15, 10);
+                    stumpGraphics.fillEllipse(20, 0, 10, 8);
+                    stumpGraphics.fillStyle(0x6B4E31, 1);
+                    stumpGraphics.fillRect(30, -40, 20, 5);
+                    this.tweens.add({
+                        targets: stumpGraphics,
+                        angle: 5,
+                        duration: 500,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                    obstacle.add(stumpGraphics);
+                    obstacle.setSize(50, 90);
+                    this.physics.add.existing(obstacle);
+                    obstacle.body.setVelocityX(-200);
+                    obstacle.body.setAllowGravity(false);
 
-                this.time.addEvent({
-                    delay: 5000,
-                    callback: () => {
-                        if (obstacle && obstacle.active) obstacle.destroy();
-                    },
-                    callbackScope: this
-                });
-            }
+                    this.physics.add.overlap(this.bunny, obstacle, (bunny, obs) => {
+                        if (!bunny || !obs || !bunny.active || !obs.active) return;
+                        const collisionY = bunny.y + bunny.body.height / 2;
+                        const obstacleTopY = obs.y - obs.body.height / 2;
+                        if (collisionY > obstacleTopY + 30) {
+                            this.gameOver();
+                        }
+                    }, null, this);
 
-            handleObstacleCollision(bunny, obstacle) {
-                if (!obstacle || !obstacle.active) return;
-                const collisionY = bunny.y + bunny.body.height / 2;
-                const obstacleTopY = obstacle.y - obstacle.body.height / 2;
-                if (collisionY > obstacleTopY + 30) {
-                    this.gameOver();
+                    this.time.addEvent({
+                        delay: 5000,
+                        callback: () => {
+                            if (obstacle && obstacle.active) {
+                                obstacle.destroy();
+                            }
+                        },
+                        callbackScope: this
+                    });
+                } catch (error) {
+                    console.warn('Error spawning obstacle:', error);
                 }
             }
 
             spawnCarrot() {
-                const carrot = this.add.container(850, Phaser.Math.Between(200, 400));
-                const carrotGraphics = this.add.graphics();
-                carrotGraphics.fillStyle(0xFFD700, 0.2);
-                carrotGraphics.fillEllipse(0, 0, 40, 40);
-                carrotGraphics.fillStyle(0xFF8C00, 1);
-                carrotGraphics.fillTriangle(0, -30, -15, 30, 15, 30);
-                carrotGraphics.lineStyle(1, 0xFFA500, 0.7);
-                for (let y = -20; y < 20; y += 5) {
-                    carrotGraphics.lineBetween(-10, y, 10, y);
-                }
-                carrotGraphics.fillStyle(0x006400, 1);
-                carrotGraphics.fillTriangle(-12, -40, -7, -25, -2, -35);
-                carrotGraphics.fillTriangle(2, -40, 7, -25, 12, -35);
-                this.tweens.add({
-                    targets: carrotGraphics,
-                    angle: 3,
-                    duration: 300,
-                    yoyo: true,
-                    repeat: -1
-                });
-                carrot.add(carrotGraphics);
-                carrot.setSize(30, 60);
-                this.physics.add.existing(carrot);
-                carrot.body.setVelocityX(-200);
-                carrot.body.setAllowGravity(false);
-                this.carrots.add(carrot);
+                try {
+                    const carrot = this.add.container(850, Phaser.Math.Between(200, 400));
+                    const carrotGraphics = this.add.graphics();
+                    carrotGraphics.fillStyle(0xFFD700, 0.2);
+                    carrotGraphics.fillEllipse(0, 0, 40, 40);
+                    carrotGraphics.fillStyle(0xFF8C00, 1);
+                    carrotGraphics.fillTriangle(0, -30, -15, 30, 15, 30);
+                    carrotGraphics.lineStyle(1, 0xFFA500, 0.7);
+                    for (let y = -20; y < 20; y += 5) {
+                        carrotGraphics.lineBetween(-10, y, 10, y);
+                    }
+                    carrotGraphics.fillStyle(0x006400, 1);
+                    carrotGraphics.fillTriangle(-12, -40, -7, -25, -2, -35);
+                    carrotGraphics.fillTriangle(2, -40, 7, -25, 12, -35);
+                    this.tweens.add({
+                        targets: carrotGraphics,
+                        angle: 3,
+                        duration: 300,
+                        yoyo: true,
+                        repeat: -1
+                    });
+                    carrot.add(carrotGraphics);
+                    carrot.setSize(30, 60);
+                    this.physics.add.existing(carrot);
+                    carrot.body.setVelocityX(-200);
+                    carrot.body.setAllowGravity(false);
 
-                this.time.addEvent({
-                    delay: 5000,
-                    callback: () => {
-                        if (carrot && carrot.active) carrot.destroy();
-                    },
-                    callbackScope: this
-                });
+                    this.physics.add.overlap(this.bunny, carrot, () => {
+                        this.collectCarrot(carrot);
+                    }, null, this);
+
+                    this.time.addEvent({
+                        delay: 5000,
+                        callback: () => {
+                            if (carrot && carrot.active) {
+                                carrot.destroy();
+                            }
+                        },
+                        callbackScope: this
+                    });
+                } catch (error) {
+                    console.warn('Error spawning carrot:', error);
+                }
             }
 
             spawnPlatform() {
-                const x = 850;
-                const y = Phaser.Math.Between(300, 450);
-                const platform = this.add.container(x, y);
-                const platformGraphics = this.add.graphics();
-                platformGraphics.fillStyle(0x8B4513, 1);
-                platformGraphics.fillRect(-50, -20, 100, 40);
-                platformGraphics.lineStyle(2, 0xA0522D, 1);
-                platformGraphics.strokeRect(-50, -20, 100, 40);
-                platform.add(platformGraphics);
-                platform.setSize(100, 40);
-                this.physics.add.existing(platform);
-                platform.body.setVelocityX(-200);
-                platform.body.setImmovable(true);
-                this.platforms.add(platform);
+                try {
+                    const x = 850;
+                    const y = Phaser.Math.Between(300, 450);
+                    const platform = this.add.container(x, y);
+                    const platformGraphics = this.add.graphics();
+                    platformGraphics.fillStyle(0x8B4513, 1);
+                    platformGraphics.fillRect(-50, -20, 100, 40);
+                    platformGraphics.lineStyle(2, 0xA0522D, 1);
+                    platformGraphics.strokeRect(-50, -20, 100, 40);
+                    platform.add(platformGraphics);
+                    platform.setSize(100, 40);
+                    this.physics.add.existing(platform);
+                    platform.body.setVelocityX(-200);
+                    platform.body.setImmovable(true);
+                    this.platforms.add(platform);
 
-                this.time.addEvent({
-                    delay: 6000,
-                    callback: () => {
-                        if (platform && platform.active) platform.destroy();
-                    },
-                    callbackScope: this
-                });
+                    this.time.addEvent({
+                        delay: 6000,
+                        callback: () => {
+                            if (platform && platform.active) {
+                                platform.destroy();
+                            }
+                        },
+                        callbackScope: this
+                    });
+                } catch (error) {
+                    console.warn('Error spawning platform:', error);
+                }
             }
 
             spawnWall() {
-                const x = 850;
-                const height = Phaser.Math.Between(100, 200);
-                const y = 500 - height / 2;
-                const wall = this.add.container(x, y);
-                const wallGraphics = this.add.graphics();
-                wallGraphics.lineStyle(1, 0x000000, 0.3);
-                wallGraphics.fillStyle(0x8B4513, 1);
-                const brickHeight = 20;
-                const brickWidth = 40;
-                const wallWidth = 40;
-                for (let h = 0; h < height; h += brickHeight) {
-                    const offset = (h / brickHeight % 2) * (brickWidth / 2);
-                    for (let w = -wallWidth / 2; w < wallWidth / 2; w += brickWidth) {
-                        wallGraphics.fillStyle(Phaser.Math.Between(0, 1) ? 0x8B4513 : 0x966F33, 1);
-                        wallGraphics.fillRect(w + offset, h - height / 2, brickWidth, brickHeight);
-                        wallGraphics.strokeRect(w + offset, h - height / 2, brickWidth, brickHeight);
+                try {
+                    const x = 850;
+                    const height = Phaser.Math.Between(100, 200);
+                    const y = 500 - height / 2;
+                    const wall = this.add.container(x, y);
+                    const wallGraphics = this.add.graphics();
+                    wallGraphics.lineStyle(1, 0x000000, 0.3);
+                    wallGraphics.fillStyle(0x8B4513, 1);
+                    const brickHeight = 20;
+                    const brickWidth = 40;
+                    const wallWidth = 40;
+                    for (let h = 0; h < height; h += brickHeight) {
+                        const offset = (h / brickHeight % 2) * (brickWidth / 2);
+                        for (let w = -wallWidth/2; w < wallWidth/2; w += brickWidth) {
+                            wallGraphics.fillStyle(Phaser.Math.Between(0, 1) ? 0x8B4513 : 0x966F33, 1);
+                            wallGraphics.fillRect(w + offset, h - height/2, brickWidth, brickHeight);
+                            wallGraphics.strokeRect(w + offset, h - height/2, brickWidth, brickHeight);
+                        }
                     }
-                }
-                wallGraphics.lineStyle(2, 0xFFFFFF, 0.2);
-                wallGraphics.lineBetween(-wallWidth / 2, -height / 2, -wallWidth / 2, height / 2);
-                wallGraphics.lineStyle(2, 0x000000, 0.2);
-                wallGraphics.lineBetween(wallWidth / 2, -height / 2, wallWidth / 2, height / 2);
-                wall.add(wallGraphics);
-                wall.setSize(wallWidth, height);
-                this.physics.add.existing(wall);
-                wall.body.setVelocityX(-200);
-                wall.body.setImmovable(true);
-                this.walls.add(wall);
+                    wallGraphics.lineStyle(2, 0xFFFFFF, 0.2);
+                    wallGraphics.lineBetween(-wallWidth/2, -height/2, -wallWidth/2, height/2);
+                    wallGraphics.lineStyle(2, 0x000000, 0.2);
+                    wallGraphics.lineBetween(wallWidth/2, -height/2, wallWidth/2, height/2);
+                    wall.add(wallGraphics);
+                    wall.setSize(wallWidth, height);
+                    this.physics.add.existing(wall);
+                    wall.body.setVelocityX(-200);
+                    wall.body.setImmovable(true);
+                    this.walls.add(wall);
 
-                this.time.addEvent({
-                    delay: 6000,
-                    callback: () => {
-                        if (wall && wall.active) wall.destroy();
-                    },
-                    callbackScope: this
-                });
+                    this.time.addEvent({
+                        delay: 6000,
+                        callback: () => {
+                            if (wall && wall.active) {
+                                wall.destroy();
+                            }
+                        },
+                        callbackScope: this
+                    });
+                } catch (error) {
+                    console.warn('Error spawning wall:', error);
+                }
             }
 
-            collectCarrot(bunny, carrot) {
+            collectCarrot(carrot) {
                 if (!carrot || !carrot.active) return;
 
                 const carrotX = carrot.x;
@@ -504,7 +533,9 @@
                     scale: 1.5,
                     duration: 500,
                     onComplete: () => {
-                        if (sparkle) sparkle.destroy();
+                        if (sparkle && sparkle.active) {
+                            sparkle.destroy();
+                        }
                     }
                 });
 
@@ -515,10 +546,14 @@
                         { carrots: 15, color: 0xFF8FAB }
                     ];
                     const tint = tints.find(t => t.carrots === this.carrots);
-                    if (tint) {
+                    if (tint && this.bunnyGraphics && this.bunnyGraphics.active) {
                         this.bunnyGraphics.setTint(tint.color);
-                        this.leftEarGraphics.setTint(tint.color);
-                        this.rightEarGraphics.setTint(tint.color);
+                        if (this.leftEarGraphics && this.leftEarGraphics.active) {
+                            this.leftEarGraphics.setTint(tint.color);
+                        }
+                        if (this.rightEarGraphics && this.rightEarGraphics.active) {
+                            this.rightEarGraphics.setTint(tint.color);
+                        }
                     }
                 } catch (error) {
                     console.warn('Error applying tint:', error);
@@ -526,93 +561,105 @@
             }
 
             jump() {
-                if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
-                    const jumpVelocity = -850 - Math.abs(this.bunny.body.velocity.x) * 0.2;
-                    this.bunny.body.setVelocityY(jumpVelocity);
-                    this.isJumping = true;
-                    this.tweens.add({
-                        targets: this.bunny,
-                        angle: this.bunny.body.velocity.x > 0 ? 45 : -45,
-                        scale: { x: 1.3, y: 0.8 },
-                        duration: 250,
-                        yoyo: true,
-                        onComplete: () => {
-                            this.bunny.angle = 0;
-                            this.bunny.scale = 1;
-                        }
-                    });
-                    const dust = this.add.graphics();
-                    dust.fillStyle(0xA9A9A9, 0.5);
-                    for (let i = 0; i < 12; i++) {
-                        const dustParticle = this.add.circle(
-                            this.bunny.x + Phaser.Math.Between(-20, 20),
-                            this.bunny.y + 25,
-                            4,
-                            0xA9A9A9,
-                            0.5
-                        );
+                try {
+                    if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
+                        const jumpVelocity = -850 - Math.abs(this.bunny.body.velocity.x) * 0.2;
+                        this.bunny.body.setVelocityY(jumpVelocity);
+                        this.isJumping = true;
                         this.tweens.add({
-                            targets: dustParticle,
-                            x: dustParticle.x + Phaser.Math.Between(-30, 30),
-                            y: dustParticle.y + Phaser.Math.Between(15, 40),
-                            alpha: 0,
-                            duration: 500,
+                            targets: this.bunny,
+                            angle: this.bunny.body.velocity.x > 0 ? 45 : -45,
+                            scale: { x: 1.3, y: 0.8 },
+                            duration: 250,
+                            yoyo: true,
                             onComplete: () => {
-                                if (dustParticle) dustParticle.destroy();
+                                if (this.bunny && this.bunny.active) {
+                                    this.bunny.angle = 0;
+                                    this.bunny.scale = 1;
+                                }
                             }
                         });
+                        const dust = this.add.graphics();
+                        dust.fillStyle(0xA9A9A9, 0.5);
+                        for (let i = 0; i < 12; i++) {
+                            const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 25, 4, 0xA9A9A9, 0.5);
+                            this.tweens.add({
+                                targets: dustParticle,
+                                x: dustParticle.x + Phaser.Math.Between(-30, 30),
+                                y: dustParticle.y + Phaser.Math.Between(15, 40),
+                                alpha: 0,
+                                duration: 500,
+                                onComplete: () => {
+                                    if (dustParticle && dustParticle.active) {
+                                        dustParticle.destroy();
+                                    }
+                                }
+                            });
+                        }
                     }
+                } catch (error) {
+                    console.warn('Error handling jump:', error);
                 }
             }
 
             gameOver() {
-                this.physics.pause();
-                this.scene.start('GameOverScene', {
-                    score: this.score,
-                    carrots: this.carrots,
-                    difficulty: this.difficulty
-                });
+                try {
+                    this.physics.pause();
+                    this.scene.start('GameOverScene', {
+                        score: this.score,
+                        carrots: this.carrots,
+                        difficulty: this.difficulty
+                    });
+                } catch (error) {
+                    console.warn('Error in gameOver:', error);
+                }
             }
 
             update(time, delta) {
-                if (this.bunny.body.touching.down) {
-                    this.lastGroundTime = time;
+                try {
+                    if (this.bunny.body.touching.down) {
+                        this.lastGroundTime = time;
+                    }
+
+                    if (this.cursors.right.isDown) {
+                        this.moveRight();
+                    } else if (this.cursors.left.isDown) {
+                        this.moveLeft();
+                    } else {
+                        this.bunny.body.setAccelerationX(0);
+                        this.bunny.body.setDragX(1000);
+                    }
+
+                    this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.2, this.speed * 1.2);
+
+                    if (!this.bunny.body.touching.down) {
+                        this.score += delta / 1000 * 10;
+                        this.scoreText.setText('Score: ' + Math.floor(this.score));
+                    } else if (this.isJumping) {
+                        this.isJumping = false;
+                        this.tweens.add({
+                            targets: this.bunny,
+                            y: this.bunny.y + 15,
+                            scale: { x: 1.2, y: 0.8 },
+                            duration: 150,
+                            yoyo: true,
+                            onComplete: () => {
+                                if (this.bunny && this.bunny.active) {
+                                    this.bunny.scale = 1;
+                                }
+                            }
+                        });
+                    }
+
+                    this.groundOffset += 2;
+                    this.hillsGraphics.x -= 0.5;
+                    this.bushesGraphics.x -= 1;
+                    if (this.hillsGraphics.x < -400) this.hillsGraphics.x += 800;
+                    if (this.bushesGraphics.x < -400) this.bushesGraphics.x += 800;
+                    this.drawGround();
+                } catch (error) {
+                    console.warn('Error in update:', error);
                 }
-
-                if (this.cursors.right.isDown) {
-                    this.moveRight();
-                } else if (this.cursors.left.isDown) {
-                    this.moveLeft();
-                } else {
-                    this.bunny.body.setAccelerationX(0);
-                    this.bunny.body.setDragX(1000);
-                }
-
-                this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.2, this.speed * 1.2);
-
-                if (!this.bunny.body.touching.down) {
-                    this.score += delta / 1000 * 10;
-                    this.scoreText.setText('Score: ' + Math.floor(this.score));
-                } else if (this.isJumping) {
-                    this.isJumping = false;
-                    this.tweens.add({
-                        targets: this.bunny,
-                        y: this.bunny.y + 15,
-                        scale: { x: 1.2, y: 0.8 },
-                        duration: 150,
-                        yoyo: true,
-                        onComplete: () => {
-                            this.bunny.scale = 1;
-                        }
-                    });
-                }
-
-                this.groundOffset += 2;
-                this.hillsGraphics.x -= 0.5;
-                this.bushesGraphics.x -= 1;
-                if (this.hillsGraphics.x < -400) this.hillsGraphics.x += 800;
-                if (this.bushesGraphics.x < -400) this.bushesGraphics.x += 800;
-                this.drawGround();
             }
         }
 
@@ -869,9 +916,9 @@
             }
 
             init(data) {
-                this.score = data.score || 0;
-                this.carrots = data.carrots || 0;
-                this.difficulty = data.difficulty || 2;
+                this.score = data.score;
+                this.carrots = data.carrots;
+                this.difficulty = data.difficulty;
             }
 
             create() {
@@ -945,11 +992,7 @@
             scene: [IntroScene, OptionsScene, GameScene, GameOverScene]
         };
 
-        try {
-            new Phaser.Game(config);
-        } catch (e) {
-            console.error('Game initialization error:', e);
-        }
+        new Phaser.Game(config);
     </script>
 </body>
 </html>
