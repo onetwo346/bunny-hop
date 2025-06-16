@@ -31,14 +31,14 @@
                 this.groundOffset = 0;
                 this.isJumping = false;
                 this.lastGroundTime = 0;
-                this.runFrame = 0; // Controls hopping cycle
+                this.runFrame = 0; // Controls run cycle
                 this.blinkFrame = 0;
                 this.earTwitchFrame = 0;
                 this.tailWagFrame = 0;
                 this.wallDelay = 4000;
                 this.coyoteTime = 100;
                 this.runSpeed = 0; // Track horizontal speed
-                this.hopPhase = 0; // Track hopping phase for ground contact
+                this.hopCycle = 0; // Track 4-beat hop cycle
             }
 
             init(data) {
@@ -91,10 +91,10 @@
                 this.bunny.add([this.bunnyGraphics, this.leftEarGraphics, this.rightEarGraphics]);
                 this.bunny.setSize(60, 80);
                 this.physics.add.existing(this.bunny);
-                this.bunny.body.setGravityY(1500); // Stronger gravity for grounding
+                this.bunny.body.setGravityY(1800); // Increased gravity for quick ground return
                 this.bunny.body.setCollideWorldBounds(true);
-                this.bunny.body.setMaxVelocityY(1000);
-                this.bunny.body.setDragX(1200); // Higher drag for grounding
+                this.bunny.body.setMaxVelocityY(1200);
+                this.bunny.body.setDragX(1800); // Higher drag for grounding
                 this.updateBunnyGraphics();
 
                 // Create groups
@@ -155,7 +155,7 @@
                     loop: true
                 });
                 this.time.addEvent({
-                    delay: 60,
+                    delay: 50, // Faster update for smoother animation
                     callback: this.updateAnimations,
                     callbackScope: this,
                     loop: true
@@ -217,15 +217,15 @@
                 this.leftEarGraphics.clear();
                 this.rightEarGraphics.clear();
 
-                // Dynamic shadow with stronger grounding effect
-                const shadowScale = 1 + (this.bunny.body.touching.down ? 0.15 : Math.max(0, this.bunny.body.velocity.y / 1000));
-                this.bunnyGraphics.fillStyle(0x000000, this.bunny.body.touching.down ? 0.5 : 0.2);
+                // Dynamic shadow with stronger grounding
+                const shadowScale = 1 + (this.bunny.body.touching.down ? 0.2 : Math.max(0, this.bunny.body.velocity.y / 800));
+                this.bunnyGraphics.fillStyle(0x000000, this.bunny.body.touching.down ? 0.6 : 0.2);
                 this.bunnyGraphics.fillEllipse(0, 60, 70 * shadowScale, 15 / shadowScale);
 
-                // Body hop based on run cycle
-                const hopHeight = this.bunny.body.touching.down ? 10 * Math.sin(this.hopPhase * Math.PI) : 0;
-                const bodyScaleY = this.isJumping ? 0.85 : 1.0 + 0.1 * Math.sin(this.hopPhase * Math.PI);
-                const bodyScaleX = this.runSpeed > 0 ? 1.15 : this.runSpeed < 0 ? 0.85 : 1;
+                // Body hop with rabbit-like amplitude
+                const hopHeight = this.bunny.body.touching.down ? 15 * Math.sin(this.hopCycle * 2 * Math.PI) : 0; // Increased amplitude
+                const bodyScaleY = this.isJumping ? 0.85 : 1.0 + 0.15 * Math.sin(this.hopCycle * 2 * Math.PI);
+                const bodyScaleX = this.runSpeed > 0 ? 1.2 : this.runSpeed < 0 ? 0.8 : 1;
                 this.bunnyGraphics.fillStyle(0xD3D8DC, 1);
                 this.bunnyGraphics.fillRoundedRect(-45 * bodyScaleX, -40 * bodyScaleY + hopHeight, 90 * bodyScaleX, 70 * bodyScaleY, 25);
                 this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
@@ -236,9 +236,9 @@
                 }
 
                 // Ear movement
-                const earAngleBase = this.runSpeed !== 0 ? 15 * Math.sign(this.runSpeed) : 0;
-                const earAngleLeft = this.earTwitchFrame === 1 ? earAngleBase - 20 : earAngleBase;
-                const earAngleRight = this.earTwitchFrame === 2 ? earAngleBase + 20 : earAngleBase;
+                const earAngleBase = this.runSpeed !== 0 ? 20 * Math.sign(this.runSpeed) : 0;
+                const earAngleLeft = this.earTwitchFrame === 1 ? earAngleBase - 25 : earAngleBase;
+                const earAngleRight = this.earTwitchFrame === 2 ? earAngleBase + 25 : earAngleBase;
                 this.leftEarGraphics.setAngle(earAngleLeft);
                 this.rightEarGraphics.setAngle(earAngleRight);
                 this.leftEarGraphics.fillGradientStyle(0xF8F9FA, 0xE8ECEF, 0xF8F9FA, 0xE8ECEF, 1);
@@ -255,26 +255,26 @@
                 this.rightEarGraphics.lineBetween(30, -58 + hopHeight, 30, -48 + hopHeight);
 
                 // Tail wag
-                const tailOffset = this.tailWagFrame * 4 * (Math.abs(this.runSpeed) / 200);
+                const tailOffset = this.tailWagFrame * 5 * (Math.abs(this.runSpeed) / 200);
                 this.bunnyGraphics.fillGradientStyle(0xFFFFFF, 0xF8F9FA, 0xFFFFFF, 0xF8F9FA, 1);
                 this.bunnyGraphics.fillCircle(-40 + tailOffset, 20 + hopHeight, 18);
                 this.bunnyGraphics.fillStyle(0xE8ECEF, 1);
                 this.bunnyGraphics.fillCircle(-40 + tailOffset, 20 + hopHeight, 14);
 
-                // Realistic leg hopping animation
-                const legHeightBase = this.isJumping ? 15 : 30;
-                const legHop = this.bunny.body.touching.down ? 10 * Math.cos(this.hopPhase * Math.PI) : 0; // Legs move opposite to body
+                // Rabbit-like 4-beat leg cycle
+                const legHeightBase = this.isJumping ? 15 : 35;
+                const legHop = this.bunny.body.touching.down ? 15 * Math.cos(this.hopCycle * 2 * Math.PI) : 0; // Increased amplitude
                 this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
-                const legCycle = Math.floor(this.runFrame / 2) % 4; // 4-phase hop cycle
+                const legCycle = Math.floor(this.runFrame / 2) % 4; // 4-beat cycle
                 const legPositions = [
-                    // Phase 0: Left front and right back on ground
+                    // Phase 0: Left front and right hind extended
                     { x1: -35, y1: 15, h1: legHeightBase + legHop, x2: 15, y2: 25, h2: legHeightBase + legHop - 10 },
-                    // Phase 1: Right front and left back on ground
+                    // Phase 1: Right front and left hind extended
                     { x1: 15, y1: 15, h1: legHeightBase + legHop, x2: -35, y2: 25, h2: legHeightBase + legHop - 10 },
-                    // Phase 2: Left front and right back on ground (slight variation)
-                    { x1: -35, y1: 18, h1: legHeightBase + legHop - 3, x2: 15, y2: 28, h2: legHeightBase + legHop - 12 },
-                    // Phase 3: Right front and left back on ground
-                    { x1: 15, y1: 18, h1: legHeightBase + legHop - 3, x2: -35, y2: 28, h2: legHeightBase + legHop - 12 }
+                    // Phase 2: All legs briefly off (mid-hop)
+                    { x1: -20, y1: 10, h1: legHeightBase - 10, x2: 20, y2: 20, h2: legHeightBase - 10 },
+                    // Phase 3: Right front and left hind extended (variation)
+                    { x1: 15, y1: 18, h1: legHeightBase + legHop - 5, x2: -35, y2: 28, h2: legHeightBase + legHop - 15 }
                 ];
                 const pos = legPositions[legCycle];
                 this.bunnyGraphics.fillRoundedRect(pos.x1 * bodyScaleX, pos.y1 + hopHeight, 20, pos.h1, 8);
@@ -301,7 +301,7 @@
                 this.bunnyGraphics.fillStyle(0xFFC1CC, 1);
                 this.bunnyGraphics.fillTriangle(0, -6 + hopHeight, -7, -3 + hopHeight, 7, -3 + hopHeight);
                 this.bunnyGraphics.fillEllipse(0, -3 + hopHeight, 14, 7);
-                const whiskerAngle = this.runSpeed / 40;
+                const whiskerAngle = this.runSpeed / 30;
                 this.bunnyGraphics.lineStyle(1, 0xFFFFFF, 0.9);
                 this.bunnyGraphics.lineBetween(-14, -3 + hopHeight, -35, -3 + whiskerAngle + hopHeight);
                 this.bunnyGraphics.lineBetween(-14, 0 + hopHeight, -33, 3 + whiskerAngle + hopHeight);
@@ -312,9 +312,13 @@
             updateAnimations() {
                 try {
                     if (this.bunny.body.touching.down && !this.isJumping && Math.abs(this.runSpeed) > 10) {
-                        this.runFrame = (this.runFrame + 1) % 8; // 8 frames for smooth hop cycle
-                        this.hopPhase = this.runFrame / 8; // Sync hop phase with run frame
-                        this.bunny.angle = 5 * Math.sin(this.hopPhase * 2 * Math.PI); // Slight tilt for hop
+                        this.runFrame = (this.runFrame + 1) % 8; // Faster cycle for rabbit run
+                        this.hopCycle = this.runFrame / 8; // Sync with 4-beat cycle
+                        this.bunny.angle = 10 * Math.sin(this.hopCycle * 2 * Math.PI); // More pronounced tilt
+                        // Brief lift-off during mid-hop (Phase 2)
+                        if (Math.floor(this.runFrame / 2) % 4 === 2) {
+                            this.bunny.body.setVelocityY(-200); // Small hop
+                        }
                     } else {
                         this.bunny.angle = this.isJumping ? 40 * Math.sin(this.bunny.body.velocity.y / 100) : 0;
                     }
@@ -330,7 +334,7 @@
 
             moveRight() {
                 if (this.bunny.body.touching.down) {
-                    const accel = 1000 + Math.abs(this.bunny.body.velocity.x) * 0.2; // Dynamic acceleration
+                    const accel = 1200 + Math.abs(this.bunny.body.velocity.x) * 0.3; // Stronger push
                     this.bunny.body.setAccelerationX(accel);
                     this.bunny.scaleX = 1;
                     this.runSpeed = Math.min(this.speed, this.bunny.body.velocity.x);
@@ -339,7 +343,7 @@
 
             moveLeft() {
                 if (this.bunny.body.touching.down) {
-                    const accel = 1000 + Math.abs(this.bunny.body.velocity.x) * 0.2;
+                    const accel = 1200 + Math.abs(this.bunny.body.velocity.x) * 0.3;
                     this.bunny.body.setAccelerationX(-accel);
                     this.bunny.scaleX = -1;
                     this.runSpeed = Math.max(-this.speed, this.bunny.body.velocity.x);
@@ -578,7 +582,7 @@
             jump() {
                 try {
                     if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
-                        const jumpVelocity = -850 - Math.abs(this.runSpeed) * 0.2;
+                        const jumpVelocity = -900 - Math.abs(this.runSpeed) * 0.3;
                         this.bunny.body.setVelocityY(jumpVelocity);
                         this.isJumping = true;
                         this.tweens.add({
@@ -642,12 +646,12 @@
                         this.moveLeft();
                     } else {
                         this.bunny.body.setAccelerationX(0);
-                        this.bunny.body.setDragX(1500); // Higher drag to stop on ground
+                        this.bunny.body.setDragX(2000); // Even higher drag to stop
                         this.runSpeed = 0;
                     }
 
                     this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.2, this.speed * 1.2);
-                    this.runSpeed = this.bunny.body.velocity.x; // Update run speed
+                    this.runSpeed = this.bunny.body.velocity.x;
 
                     if (!this.bunny.body.touching.down) {
                         this.score += delta / 1000 * 10;
@@ -840,7 +844,7 @@
                     const x = Phaser.Math.Between(0, 800);
                     const y = Phaser.Math.Between(50, 200);
                     cloud.fillCircle(x, y, 30);
-                    cloud.fillCircle(x + 20, y - 10, 25);
+                    cloud.fillCircle(x + 20, y -10, 25);
                     cloud.fillCircle(x - 20, y - 5, 25);
                     this.tweens.add({
                         targets: cloud,
