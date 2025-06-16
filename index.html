@@ -35,25 +35,25 @@
                 this.blinkFrame = 0;
                 this.earTwitchFrame = 0;
                 this.tailWagFrame = 0;
-                this.wallDelay = 4000; // Time between wall spawns
+                this.coyoteTime = 200; // Added coyote time for jump forgiveness
+                this.lastBunnyState = null; // Cache for bunny graphics optimization
             }
 
             init(data) {
                 this.difficulty = data.difficulty || 2;
-                // Set game parameters based on difficulty
                 const difficultySettings = {
-                    1: { speed: 300, obstacleDelay: 3000, carrotDelay: 4000, platformDelay: 5000 },
-                    2: { speed: 400, obstacleDelay: 2000, carrotDelay: 3000, platformDelay: 4000 },
-                    3: { speed: 500, obstacleDelay: 1500, carrotDelay: 2500, platformDelay: 3500 },
-                    4: { speed: 600, obstacleDelay: 1200, carrotDelay: 2000, platformDelay: 3000 },
-                    5: { speed: 700, obstacleDelay: 1000, carrotDelay: 1800, platformDelay: 2500 }
+                    1: { speed: 300, obstacleDelay: 3000, carrotDelay: 4000, platformDelay: 5000, wallDelay: 4000 },
+                    2: { speed: 400, obstacleDelay: 2000, carrotDelay: 3000, platformDelay: 4000, wallDelay: 4000 },
+                    3: { speed: 500, obstacleDelay: 1500, carrotDelay: 2500, platformDelay: 3500, wallDelay: 4000 },
+                    4: { speed: 600, obstacleDelay: 1200, carrotDelay: 2000, platformDelay: 3000, wallDelay: 4000 },
+                    5: { speed: 700, obstacleDelay: 1000, carrotDelay: 1800, platformDelay: 2500, wallDelay: 4000 }
                 };
-
                 const settings = difficultySettings[this.difficulty];
                 this.speed = settings.speed;
                 this.obstacleDelay = settings.obstacleDelay;
                 this.carrotDelay = settings.carrotDelay;
                 this.platformDelay = settings.platformDelay;
+                this.wallDelay = settings.wallDelay;
             }
 
             preload() {
@@ -70,7 +70,7 @@
                 this.leftEarGraphics = this.add.graphics();
                 this.rightEarGraphics = this.add.graphics();
 
-                // Draw static background elements once
+                // Draw static background elements
                 this.drawSky();
                 this.drawBackground();
 
@@ -96,15 +96,18 @@
                 this.bunny.body.setDragX(800);
                 this.updateBunnyGraphics();
 
-                // Create platform group
-                this.platforms = this.physics.add.group({
-                    allowGravity: false,
-                    immovable: true
-                });
+                // Create physics groups
+                this.platforms = this.physics.add.group({ allowGravity: false, immovable: true });
+                this.walls = this.physics.add.group({ allowGravity: false, immovable: true }); // Initialize walls group
+                this.carrots = this.physics.add.group({ allowGravity: false });
+                this.obstacles = this.physics.add.group({ allowGravity: false });
 
                 // Set up collisions
                 this.physics.add.collider(this.bunny, this.ground);
                 this.physics.add.collider(this.bunny, this.platforms);
+                this.physics.add.collider(this.bunny, this.walls, this.handleWallCollision, null, this);
+                this.physics.add.overlap(this.bunny, this.carrots, this.collectCarrot, null, this);
+                this.physics.add.overlap(this.bunny, this.obstacles, this.handleObstacleCollision, null, this);
 
                 // Input handling
                 this.cursors = this.input.keyboard.createCursorKeys();
@@ -124,36 +127,15 @@
                 });
 
                 // Timed events
-                this.time.addEvent({
-                    delay: this.obstacleDelay,
-                    callback: this.spawnObstacle,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.carrotDelay,
-                    callback: this.spawnCarrot,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.platformDelay,
-                    callback: this.spawnPlatform,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: this.wallDelay,
-                    callback: this.spawnWall,
-                    callbackScope: this,
-                    loop: true
-                });
-                this.time.addEvent({
-                    delay: 60,
-                    callback: this.updateAnimations,
-                    callbackScope: this,
-                    loop: true
-                });
+                this.time.addEvent({ delay: this.obstacleDelay, callback: this.spawnObstacle, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.carrotDelay, callback: this.spawnCarrot, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.platformDelay, callback: this.spawnPlatform, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: this.wallDelay, callback: this.spawnWall, callbackScope: this, loop: true });
+                this.time.addEvent({ delay: 60, callback: this.updateAnimations, callbackScope: this, loop: true });
+
+                // Initialize object pools
+                this.sparklePool = this.add.group({ createCallback: item => item.setActive(false).setVisible(false) });
+                this.dustPool = this.add.group({ createCallback: item => item.setActive(false).setVisible(false) });
             }
 
             drawSky() {
@@ -201,6 +183,19 @@
             }
 
             updateBunnyGraphics() {
+                // Cache state to avoid unnecessary redraws
+                const currentState = {
+                    velocityX: this.bunny.body.velocity.x,
+                    velocityY: this.bunny.body.velocity.y,
+                    isJumping: this.isJumping,
+                    runFrame: this.runFrame,
+                    blinkFrame: this.blinkFrame,
+                    earTwitchFrame: this.earTwitchFrame,
+                    tailWagFrame: this.tailWagFrame
+                };
+                if (JSON.stringify(currentState) === JSON.stringify(this.lastBunnyState)) return;
+                this.lastBunnyState = currentState;
+
                 this.bunnyGraphics.clear();
                 this.leftEarGraphics.clear();
                 this.rightEarGraphics.clear();
@@ -215,50 +210,31 @@
                 this.bunnyGraphics.fillRoundedRect(-45 * bodyScaleX, -40 * bodyScaleY, 90 * bodyScaleX, 70 * bodyScaleY, 25);
                 this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
                 this.bunnyGraphics.fillRoundedRect(-40 * bodyScaleX, -35 * bodyScaleY, 80 * bodyScaleX, 60 * bodyScaleY, 20);
-                this.bunnyGraphics.lineStyle(1, 0xB0B7C0, 0.6);
-                for (let x = -35; x <= 35; x += 10) {
-                    this.bunnyGraphics.lineBetween(x * bodyScaleX, -25 * bodyScaleY, x * bodyScaleX + 5, -15 * bodyScaleY);
-                }
 
                 const earAngleBase = this.bunny.body.velocity.x !== 0 ? 15 * Math.sign(this.bunny.body.velocity.x) : 0;
                 const earAngleLeft = this.earTwitchFrame === 1 ? earAngleBase - 20 : earAngleBase;
                 const earAngleRight = this.earTwitchFrame === 2 ? earAngleBase + 20 : earAngleBase;
                 this.leftEarGraphics.setAngle(earAngleLeft);
                 this.rightEarGraphics.setAngle(earAngleRight);
-                this.leftEarGraphics.fillGradientStyle(0xF8F9FA, 0xE8ECEF, 0xF8F9FA, 0xE8ECEF, 1);
+                this.leftEarGraphics.fillStyle(0xF8F9FA, 1);
                 this.leftEarGraphics.fillEllipse(-30, -70, 20, 50);
-                this.leftEarGraphics.fillStyle(0xFFC1CC, 1);
-                this.leftEarGraphics.fillEllipse(-30, -70, 14, 40);
-                this.leftEarGraphics.lineStyle(1, 0xD3D3D3, 0.4);
-                this.leftEarGraphics.lineBetween(-30, -60, -30, -50);
-                this.rightEarGraphics.fillGradientStyle(0xF8F9FA, 0xE8ECEF, 0xF8F9FA, 0xE8ECEF, 1);
+                this.rightEarGraphics.fillStyle(0xF8F9FA, 1);
                 this.rightEarGraphics.fillEllipse(30, -68, 20, 50);
-                this.rightEarGraphics.fillStyle(0xFFC1CC, 1);
-                this.rightEarGraphics.fillEllipse(30, -68, 14, 40);
-                this.rightEarGraphics.lineStyle(1, 0xD3D3D3, 0.4);
-                this.rightEarGraphics.lineBetween(30, -58, 30, -48);
 
                 const tailOffset = this.tailWagFrame * 4 * (Math.abs(this.bunny.body.velocity.x) / 200);
-                this.bunnyGraphics.fillGradientStyle(0xFFFFFF, 0xF8F9FA, 0xFFFFFF, 0xF8F9FA, 1);
+                this.bunnyGraphics.fillStyle(0xFFFFFF, 1);
                 this.bunnyGraphics.fillCircle(-40 + tailOffset, 20, 18);
-                this.bunnyGraphics.fillStyle(0xE8ECEF, 1);
-                this.bunnyGraphics.fillCircle(-40 + tailOffset, 20, 14);
 
                 const legHeight = this.isJumping ? 15 : 30;
-                this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
                 const legPositions = [
                     { x1: -35, y1: 15, h1: legHeight, x2: 15, y2: 25, h2: legHeight - 10 },
                     { x1: -35, y1: 20, h1: legHeight - 5, x2: 15, y2: 30, h2: legHeight - 15 },
                     { x1: -30, y1: 18, h1: legHeight - 3, x2: 20, y2: 35, h2: legHeight - 20 },
                     { x1: -30, y1: 22, h1: legHeight - 7, x2: 20, y2: 25, h2: legHeight - 10 },
-                    { x1: -35, y1: 15, h1: legHeight, x2: 15, y2: 20, h2: legHeight - 5 },
-                    { x1: -35, y1: 18, h1: legHeight - 3, x2: 15, y2: 15, h2: legHeight },
-                    { x1: -30, y1: 20, h1: legHeight - 5, x2: 20, y2: 18, h2: legHeight - 3 },
-                    { x1: -30, y1: 22, h1: legHeight - 7, x2: 20, y2: 20, h2: legHeight - 5 },
-                    { x1: -35, y1: 18, h1: legHeight - 3, x2: 15, y2: 22, h2: legHeight - 7 },
-                    { x1: -35, y1: 15, h1: legHeight, x2: 15, y2: 18, h2: legHeight - 3 }
+                    { x1: -35, y1: 15, h1: legHeight, x2: 15, y2: 20, h2: legHeight - 5 }
                 ];
-                const pos = legPositions[this.runFrame];
+                const pos = legPositions[this.runFrame % legPositions.length];
+                this.bunnyGraphics.fillStyle(0xF8F9FA, 1);
                 this.bunnyGraphics.fillRoundedRect(pos.x1, pos.y1, 20, pos.h1, 8);
                 this.bunnyGraphics.fillRoundedRect(pos.x2, pos.y2, 20, pos.h2, 8);
 
@@ -267,32 +243,11 @@
                 const eyeHeight = this.blinkFrame > 0 ? 4 : 9;
                 this.bunnyGraphics.fillEllipse(-20, -18, eyeSize, eyeHeight);
                 this.bunnyGraphics.fillEllipse(20, -18, eyeSize, eyeHeight);
-                if (!this.blinkFrame) {
-                    this.bunnyGraphics.fillStyle(0xFFFFFF, 1);
-                    this.bunnyGraphics.fillCircle(-19, -19, 3);
-                    this.bunnyGraphics.fillCircle(21, -19, 3);
-                }
-                this.bunnyGraphics.lineStyle(1, 0x000000, 0.8);
-                if (!this.blinkFrame) {
-                    this.bunnyGraphics.lineBetween(-20, -23, -22, -25);
-                    this.bunnyGraphics.lineBetween(-18, -23, -20, -25);
-                    this.bunnyGraphics.lineBetween(20, -23, 22, -25);
-                    this.bunnyGraphics.lineBetween(18, -23, 20, -25);
-                }
-                this.bunnyGraphics.fillStyle(0xFFC1CC, 1);
-                this.bunnyGraphics.fillTriangle(0, -6, -7, -3, 7, -3);
-                this.bunnyGraphics.fillEllipse(0, -3, 14, 7);
-                const whiskerAngle = this.bunny.body.velocity.x / 40;
-                this.bunnyGraphics.lineStyle(1, 0xFFFFFF, 0.9);
-                this.bunnyGraphics.lineBetween(-14, -3, -35, -3 + whiskerAngle);
-                this.bunnyGraphics.lineBetween(-14, 0, -33, 3 + whiskerAngle);
-                this.bunnyGraphics.lineBetween(14, -3, 35, -3 + whiskerAngle);
-                this.bunnyGraphics.lineBetween(14, 0, 33, 3 + whiskerAngle);
             }
 
             updateAnimations() {
                 if (this.bunny.body.touching.down && !this.isJumping && Math.abs(this.bunny.body.velocity.x) > 10) {
-                    this.runFrame = (this.runFrame + 1) % 10;
+                    this.runFrame = (this.runFrame + 1) % 5;
                     this.bunny.angle = 7 * Math.sin(this.runFrame * Math.PI / 5);
                 } else {
                     this.bunny.angle = this.isJumping ? 40 * Math.sin(this.bunny.body.velocity.y / 100) : 0;
@@ -319,98 +274,59 @@
             spawnObstacle() {
                 const obstacle = this.add.container(850, 500);
                 const stumpGraphics = this.add.graphics();
-                stumpGraphics.fillStyle(0x000000, 0.3);
-                stumpGraphics.fillEllipse(0, 40, 60, 10);
                 stumpGraphics.fillStyle(0x6B4E31, 1);
                 stumpGraphics.fillRoundedRect(-35, -60, 70, 100, 20);
-                stumpGraphics.lineStyle(2, 0x8B4513, 0.6);
-                for (let y = -50; y < 30; y += 10) {
-                    stumpGraphics.lineBetween(-20, y, 20, y + 5);
-                }
-                stumpGraphics.fillStyle(0x228B22, 0.7);
-                stumpGraphics.fillEllipse(-25, -10, 15, 10);
-                stumpGraphics.fillEllipse(20, 0, 10, 8);
-                stumpGraphics.fillStyle(0x6B4E31, 1);
-                stumpGraphics.fillRect(30, -40, 20, 5);
-                this.tweens.add({
-                    targets: stumpGraphics,
-                    angle: 5,
-                    duration: 500,
-                    yoyo: true,
-                    repeat: -1
-                });
                 obstacle.add(stumpGraphics);
                 obstacle.setSize(50, 90);
                 this.physics.add.existing(obstacle);
                 obstacle.body.setVelocityX(-200);
                 obstacle.body.setAllowGravity(false);
-
-                this.physics.add.overlap(this.bunny, obstacle, (bunny, obs) => {
-                    const collisionY = bunny.y + bunny.body.height / 2;
-                    const obstacleTopY = obs.y - obs.body.height / 2;
-                    if (collisionY > obstacleTopY + 30) {
-                        this.gameOver();
-                    }
-                }, null, this);
+                this.obstacles.add(obstacle);
 
                 this.time.addEvent({
                     delay: 5000,
                     callback: () => {
-                        obstacle.destroy();
+                        if (obstacle.active) obstacle.destroy();
                     },
                     callbackScope: this
                 });
             }
 
+            handleObstacleCollision(bunny, obstacle) {
+                if (!bunny.active || !obstacle.active) return;
+                const collisionY = bunny.y + bunny.body.height / 2;
+                const obstacleTopY = obstacle.y - obstacle.body.height / 2;
+                if (collisionY > obstacleTopY + 30) {
+                    this.gameOver();
+                }
+            }
+
             spawnCarrot() {
                 const carrot = this.add.container(850, Phaser.Math.Between(200, 400));
                 const carrotGraphics = this.add.graphics();
-                carrotGraphics.fillStyle(0xFFD700, 0.2);
-                carrotGraphics.fillEllipse(0, 0, 40, 40);
                 carrotGraphics.fillStyle(0xFF8C00, 1);
                 carrotGraphics.fillTriangle(0, -30, -15, 30, 15, 30);
-                carrotGraphics.lineStyle(1, 0xFFA500, 0.7);
-                for (let y = -20; y < 20; y += 5) {
-                    carrotGraphics.lineBetween(-10, y, 10, y);
-                }
-                carrotGraphics.fillStyle(0x006400, 1);
-                carrotGraphics.fillTriangle(-12, -40, -7, -25, -2, -35);
-                carrotGraphics.fillTriangle(2, -40, 7, -25, 12, -35);
-                this.tweens.add({
-                    targets: carrotGraphics,
-                    angle: 3,
-                    duration: 300,
-                    yoyo: true,
-                    repeat: -1
-                });
                 carrot.add(carrotGraphics);
                 carrot.setSize(30, 60);
                 this.physics.add.existing(carrot);
                 carrot.body.setVelocityX(-200);
                 carrot.body.setAllowGravity(false);
-
-                this.physics.add.overlap(this.bunny, carrot, () => {
-                    this.collectCarrot(carrot);
-                }, null, this);
+                this.carrots.add(carrot);
 
                 this.time.addEvent({
                     delay: 5000,
                     callback: () => {
-                        carrot.destroy();
+                        if (carrot.active) carrot.destroy();
                     },
                     callbackScope: this
                 });
             }
 
             spawnPlatform() {
-                const x = 850;
-                const y = Phaser.Math.Between(300, 450);
-                const platform = this.add.container(x, y);
+                const platform = this.add.container(850, Phaser.Math.Between(300, 450));
                 const platformGraphics = this.add.graphics();
                 platformGraphics.fillStyle(0x8B4513, 1);
                 platformGraphics.fillRect(-50, -20, 100, 40);
-                platformGraphics.lineStyle(2, 0xA0522D, 1);
-                platformGraphics.strokeRect(-50, -20, 100, 40);
                 platform.add(platformGraphics);
                 platform.setSize(100, 40);
                 this.physics.add.existing(platform);
@@ -421,126 +337,79 @@
                 this.time.addEvent({
                     delay: 6000,
                     callback: () => {
-                        platform.destroy();
+                        if (platform.active) platform.destroy();
                     },
                     callbackScope: this
                 });
             }
 
             spawnWall() {
-                const x = 850;
-                const height = Phaser.Math.Between(100, 200); // Random height between 100-200px
-                const y = 500 - height / 2; // Position from ground up
-                
-                const wall = this.add.container(x, y);
+                const height = Phaser.Math.Between(100, 200);
+                const wall = this.add.container(850, 500 - height / 2);
                 const wallGraphics = this.add.graphics();
-                
-                // Add brick pattern
-                wallGraphics.lineStyle(1, 0x000000, 0.3);
                 wallGraphics.fillStyle(0x8B4513, 1);
-                
-                const brickHeight = 20;
-                const brickWidth = 40;
-                const wallWidth = 40;
-                
-                // Draw bricks
-                for (let h = 0; h < height; h += brickHeight) {
-                    const offset = (h / brickHeight % 2) * (brickWidth / 2); // Offset every other row
-                    for (let w = -wallWidth/2; w < wallWidth/2; w += brickWidth) {
-                        wallGraphics.fillStyle(Phaser.Math.Between(0, 1) ? 0x8B4513 : 0x966F33, 1);
-                        wallGraphics.fillRect(w + offset, h - height/2, brickWidth, brickHeight);
-                        wallGraphics.strokeRect(w + offset, h - height/2, brickWidth, brickHeight);
-                    }
-                }
-                
-                // Add highlight/shadow
-                wallGraphics.lineStyle(2, 0xFFFFFF, 0.2);
-                wallGraphics.lineBetween(-wallWidth/2, -height/2, -wallWidth/2, height/2); // Left highlight
-                wallGraphics.lineStyle(2, 0x000000, 0.2);
-                wallGraphics.lineBetween(wallWidth/2, -height/2, wallWidth/2, height/2); // Right shadow
-                
+                wallGraphics.fillRect(-20, -height / 2, 40, height);
                 wall.add(wallGraphics);
-                wall.setSize(wallWidth, height);
-                
+                wall.setSize(40, height);
                 this.physics.add.existing(wall);
                 wall.body.setVelocityX(-200);
                 wall.body.setImmovable(true);
                 this.walls.add(wall);
-                
-                // Add collision with bunny
-                this.physics.add.collider(this.bunny, wall);
-                
-                // Cleanup after wall moves off screen
+
                 this.time.addEvent({
                     delay: 6000,
                     callback: () => {
-                        wall.destroy();
+                        if (wall.active) wall.destroy();
                     },
                     callbackScope: this
                 });
             }
 
-            collectCarrot(carrot) {
-                if (!carrot || !carrot.active) return; // Prevent double collection
-                
-                // Store position before destroying
+            handleWallCollision(bunny, wall) {
+                if (!bunny.active || !wall.active) return;
+                this.gameOver();
+            }
+
+            collectCarrot(bunny, carrot) {
+                if (!bunny.active || !carrot.active) return;
                 const carrotX = carrot.x;
                 const carrotY = carrot.y;
-                
-                // Safely destroy carrot
                 carrot.destroy();
-                
-                // Update score
                 this.carrots++;
                 this.carrotText.setText('Carrots: ' + this.carrots);
-                
-                // Create sparkle effect
-                const sparkle = this.add.graphics();
-                sparkle.setPosition(carrotX, carrotY);
-                sparkle.fillStyle(0xFFD700, 1);
-                
-                // Create sparkle particles in a circular pattern
-                const numParticles = 8;
-                for (let i = 0; i < numParticles; i++) {
-                    const angle = (i / numParticles) * Math.PI * 2;
-                    const distance = Phaser.Math.Between(5, 15);
-                    const x = Math.cos(angle) * distance;
-                    const y = Math.sin(angle) * distance;
-                    sparkle.fillCircle(x, y, 3);
-                }
-                
-                // Animate and cleanup sparkle
-                this.tweens.add({
-                    targets: sparkle,
-                    alpha: 0,
-                    scale: 1.5,
-                    duration: 500,
-                    onComplete: () => {
-                        if (sparkle && sparkle.active) {
-                            sparkle.destroy();
-                        }
-                    }
-                });
 
-                // Handle bunny color changes
+                // Sparkle effect using pool
+                const sparkle = this.sparklePool.getFirstDead(true, carrotX, carrotY);
+                if (sparkle) {
+                    sparkle.setActive(true).setVisible(true);
+                    sparkle.clear().fillStyle(0xFFD700, 1);
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i / 8) * Math.PI * 2;
+                        const distance = Phaser.Math.Between(5, 15);
+                        sparkle.fillCircle(Math.cos(angle) * distance, Math.sin(angle) * distance, 3);
+                    }
+                    this.tweens.add({
+                        targets: sparkle,
+                        alpha: 0,
+                        scale: 1.5,
+                        duration: 500,
+                        onComplete: () => {
+                            sparkle.setActive(false).setVisible(false);
+                        }
+                    });
+                }
+
                 try {
-                    // Color changes based on carrot count
                     const tints = [
-                        { carrots: 5, color: 0xFF6B6B },   // Light red at 5 carrots
-                        { carrots: 10, color: 0x343A40 },  // Dark gray at 10 carrots
-                        { carrots: 15, color: 0xFF8FAB }   // Pink at 15 carrots
+                        { carrots: 5, color: 0xFF6B6B },
+                        { carrots: 10, color: 0x343A40 },
+                        { carrots: 15, color: 0xFF8FAB }
                     ];
-                    
-                    // Find matching tint or clear existing tint
                     const tint = tints.find(t => t.carrots === this.carrots);
-                    if (tint && this.bunnyGraphics && this.bunnyGraphics.active) {
+                    if (tint) {
                         this.bunnyGraphics.setTint(tint.color);
-                        if (this.leftEarGraphics && this.leftEarGraphics.active) {
-                            this.leftEarGraphics.setTint(tint.color);
-                        }
-                        if (this.rightEarGraphics && this.rightEarGraphics.active) {
-                            this.rightEarGraphics.setTint(tint.color);
-                        }
+                        this.leftEarGraphics.setTint(tint.color);
+                        this.rightEarGraphics.setTint(tint.color);
                     }
                 } catch (error) {
                     console.warn('Error applying tint:', error);
@@ -563,24 +432,28 @@
                             this.bunny.scale = 1;
                         }
                     });
-                    const dust = this.add.graphics();
-                    dust.fillStyle(0xA9A9A9, 0.5);
                     for (let i = 0; i < 12; i++) {
-                        const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 25, 4, 0xA9A9A9, 0.5);
-                        this.tweens.add({
-                            targets: dustParticle,
-                            x: dustParticle.x + Phaser.Math.Between(-30, 30),
-                            y: dustParticle.y + Phaser.Math.Between(15, 40),
-                            alpha: 0,
-                            duration: 500,
-                            onComplete: () => dustParticle.destroy()
-                        });
+                        const dust = this.dustPool.getFirstDead(true, this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 25);
+                        if (dust) {
+                            dust.setActive(true).setVisible(true);
+                            dust.clear().fillStyle(0xA9A9A9, 0.5).fillCircle(0, 0, 4);
+                            this.tweens.add({
+                                targets: dust,
+                                x: dust.x + Phaser.Math.Between(-30, 30),
+                                y: dust.y + Phaser.Math.Between(15, 40),
+                                alpha: 0,
+                                duration: 500,
+                                onComplete: () => dust.setActive(false).setVisible(false)
+                            });
+                        }
                     }
                 }
             }
 
             gameOver() {
                 this.physics.pause();
+                this.tweens.killAll();
+                this.time.removeAllEvents();
                 this.scene.start('GameOverScene', {
                     score: this.score,
                     carrots: this.carrots,
@@ -636,12 +509,10 @@
             }
 
             create() {
-                // Create gradient background
                 const skyGraphics = this.add.graphics();
                 skyGraphics.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
                 skyGraphics.fillRect(0, 0, 800, 600);
 
-                // Add floating clouds
                 for (let i = 0; i < 5; i++) {
                     const cloud = this.add.graphics();
                     cloud.fillStyle(0xffffff, 0.8);
@@ -649,7 +520,6 @@
                     const y = Phaser.Math.Between(50, 200);
                     cloud.fillCircle(x, y, 30);
                     cloud.fillCircle(x + 20, y - 10, 25);
-                    cloud.fillCircle(x - 20, y - 5, 25);
                     this.tweens.add({
                         targets: cloud,
                         x: '+=20',
@@ -660,35 +530,18 @@
                     });
                 }
 
-                // Create decorative bunny
-                const bunny = this.add.graphics();
-                bunny.setPosition(400, 200);
-                bunny.fillStyle(0xFFFFFF, 1);
-                bunny.fillCircle(0, 0, 40); // body
-                bunny.fillCircle(-20, -50, 15); // left ear
-                bunny.fillCircle(20, -50, 15); // right ear
-                bunny.fillStyle(0xFF69B4, 1);
-                bunny.fillCircle(-10, -10, 5); // nose
-                bunny.lineStyle(2, 0x000000, 1);
-                bunny.strokeCircle(-20, -15, 8); // left eye
-                bunny.strokeCircle(20, -15, 8); // right eye
-
-                // Add glowing title effect
-                const titleGlow = this.add.text(400, 100, 'Bunny Hop', {
+                const title = this.add.text(400, 100, 'Bunny Hop', {
                     fontSize: '72px',
                     fontFamily: 'Arial Black',
                     color: '#fff',
                     stroke: '#4a90e2',
-                    strokeThickness: 16,
-                    shadow: { color: '#4a90e2', blur: 25, stroke: true, fill: true }
+                    strokeThickness: 12
                 }).setOrigin(0.5);
 
-                // Create container for controls
                 const controlsBox = this.add.graphics();
                 controlsBox.fillStyle(0x000000, 0.3);
                 controlsBox.fillRoundedRect(200, 260, 400, 160, 20);
 
-                // Add controls text with icons
                 const controls = [
                     '🎮 Controls',
                     '',
@@ -706,19 +559,12 @@
                     lineSpacing: 15
                 }).setOrigin(0.5);
 
-                // Add animated start button with rounded rectangle background
                 const startButton = this.add.graphics();
                 startButton.setPosition(400, 520);
                 startButton.lineStyle(4, 0xFFFFFF, 1);
                 startButton.fillStyle(0x0d47a1, 0.9);
                 startButton.fillRoundedRect(-120, -30, 240, 60, 30);
                 startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-
-                // Add white glow effect
-                const glowButton = this.add.graphics();
-                glowButton.setPosition(400, 520);
-                glowButton.lineStyle(8, 0xFFFFFF, 0.3);
-                glowButton.strokeRoundedRect(-120, -30, 240, 60, 30);
 
                 const startText = this.add.text(400, 520, 'TAP TO BEGIN', {
                     fontSize: '32px',
@@ -728,17 +574,6 @@
                     strokeThickness: 6
                 }).setOrigin(0.5);
 
-                // Add pulsing glow effect
-                this.tweens.add({
-                    targets: glowButton,
-                    alpha: { from: 0.1, to: 0.5 },
-                    duration: 1200,
-                    yoyo: true,
-                    repeat: -1,
-                    ease: 'Sine.easeInOut'
-                });
-
-                // Subtle scale animation
                 this.tweens.add({
                     targets: [startButton, startText],
                     scaleX: 1.05,
@@ -749,41 +584,15 @@
                     ease: 'Sine.easeInOut'
                 });
 
-                // Make everything interactive
-                startButton.setInteractive(new Phaser.Geom.Rectangle(-100, -25, 200, 50), Phaser.Geom.Rectangle.Contains);
+                startButton.setInteractive(new Phaser.Geom.Rectangle(-120, -30, 240, 60), Phaser.Geom.Rectangle.Contains);
                 startText.setInteractive();
-
-                const startGame = () => this.startGame();
+                const startGame = () => this.scene.start('OptionsScene');
                 startButton.on('pointerdown', startGame);
                 startText.on('pointerdown', startGame);
 
-                // Add hover effect
-                startButton.on('pointerover', () => {
-                    startButton.clear();
-                    startButton.lineStyle(4, 0xFFFFFF, 1);
-                    startButton.fillStyle(0x1565c0, 0.9);
-                    startButton.fillRoundedRect(-120, -30, 240, 60, 30);
-                    startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-                    startText.setStyle({ stroke: '#1e88e5' });
-                });
-
-                startButton.on('pointerout', () => {
-                    startButton.clear();
-                    startButton.lineStyle(4, 0xFFFFFF, 1);
-                    startButton.fillStyle(0x0d47a1, 0.9);
-                    startButton.fillRoundedRect(-120, -30, 240, 60, 30);
-                    startButton.strokeRoundedRect(-120, -30, 240, 60, 30);
-                    startText.setStyle({ stroke: '#1565c0' });
-                });
-
-                // Handle input
-                this.input.on('pointerdown', () => this.startGame());
-                this.input.keyboard.on('keydown-SPACE', () => this.startGame());
-                this.input.keyboard.on('keydown-ENTER', () => this.startGame());
-            }
-
-            startGame() {
-                this.scene.start('OptionsScene');
+                this.input.on('pointerdown', startGame);
+                this.input.keyboard.on('keydown-SPACE', startGame);
+                this.input.keyboard.on('keydown-ENTER', startGame);
             }
         }
 
@@ -793,12 +602,10 @@
             }
 
             create() {
-                // Create gradient background
                 const skyGraphics = this.add.graphics();
                 skyGraphics.fillGradientStyle(0x1a73e8, 0x174ea6, 0x174ea6, 0x1a73e8, 1);
                 skyGraphics.fillRect(0, 0, 800, 600);
 
-                // Add floating clouds (reuse from IntroScene)
                 for (let i = 0; i < 5; i++) {
                     const cloud = this.add.graphics();
                     cloud.fillStyle(0xffffff, 0.8);
@@ -806,7 +613,6 @@
                     const y = Phaser.Math.Between(50, 200);
                     cloud.fillCircle(x, y, 30);
                     cloud.fillCircle(x + 20, y - 10, 25);
-                    cloud.fillCircle(x - 20, y - 5, 25);
                     this.tweens.add({
                         targets: cloud,
                         x: '+=20',
@@ -817,22 +623,18 @@
                     });
                 }
 
-                // Add glowing title
                 this.add.text(400, 100, 'Select Difficulty', {
                     fontSize: '48px',
                     fontFamily: 'Arial Black',
                     color: '#fff',
                     stroke: '#4a90e2',
-                    strokeThickness: 12,
-                    shadow: { color: '#4a90e2', blur: 20, stroke: true, fill: true }
+                    strokeThickness: 12
                 }).setOrigin(0.5);
 
-                // Create container for difficulty buttons
                 const container = this.add.graphics();
                 container.fillStyle(0x000000, 0.3);
                 container.fillRoundedRect(200, 180, 400, 400, 20);
 
-                // Create difficulty buttons with modern styling
                 const difficulties = [
                     { level: 1, name: 'Easy Hop', color: 0x4CAF50, desc: 'Perfect for beginners' },
                     { level: 2, name: 'Normal Bounce', color: 0x2196F3, desc: 'Standard challenge' },
@@ -843,16 +645,12 @@
 
                 difficulties.forEach((diff, index) => {
                     const y = 230 + index * 70;
-                    
-                    // Create button background
-                    const buttonBg = this.add.graphics();
-                    buttonBg.setPosition(400, y);
+                    const buttonBg = this.add.graphics().setPosition(400, y);
                     buttonBg.lineStyle(3, 0xFFFFFF, 0.8);
                     buttonBg.fillStyle(diff.color, 0.2);
                     buttonBg.fillRoundedRect(-160, -25, 320, 50, 15);
                     buttonBg.strokeRoundedRect(-160, -25, 320, 50, 15);
 
-                    // Add button text
                     const text = this.add.text(400, y - 10, diff.name, {
                         fontSize: '24px',
                         fontFamily: 'Arial Black',
@@ -861,14 +659,12 @@
                         strokeThickness: 4
                     }).setOrigin(0.5);
 
-                    // Add description
                     const descText = this.add.text(400, y + 15, diff.desc, {
                         fontSize: '16px',
                         fontFamily: 'Arial',
                         color: '#ccc'
                     }).setOrigin(0.5);
 
-                    // Make interactive
                     buttonBg.setInteractive(new Phaser.Geom.Rectangle(-160, -25, 320, 50), Phaser.Geom.Rectangle.Contains)
                         .on('pointerover', () => {
                             buttonBg.clear();
@@ -888,15 +684,10 @@
                             text.setScale(1);
                             descText.setScale(1);
                         })
-                        .on('pointerdown', () => this.startGame(diff.level));
-                });
-            }
-
-            startGame(difficulty) {
-                // Add transition effect
-                this.cameras.main.fade(500, 0, 0, 0);
-                this.time.delayedCall(500, () => {
-                    this.scene.start('GameScene', { difficulty });
+                        .on('pointerdown', () => {
+                            this.cameras.main.fade(500, 0, 0, 0);
+                            this.time.delayedCall(500, () => this.scene.start('GameScene', { difficulty: diff.level }));
+                        });
                 });
             }
         }
@@ -907,28 +698,24 @@
             }
 
             init(data) {
-                this.score = data.score;
-                this.carrots = data.carrots;
-                this.difficulty = data.difficulty;
+                this.score = data.score || 0;
+                this.carrots = data.carrots || 0;
+                this.difficulty = data.difficulty || 2;
             }
 
             create() {
-                // Draw sky background
                 const skyGraphics = this.add.graphics();
                 skyGraphics.fillGradientStyle(0x87CEEB, 0x87CEEB, 0xE0FFFF, 0xE0FFFF, 1);
                 skyGraphics.fillRect(0, 0, 800, 600);
 
-                // Game Over text
                 this.add.text(400, 150, 'Game Over!', {
                     fontSize: '64px',
                     fontFamily: 'Arial',
                     color: '#fff',
                     stroke: '#000',
-                    strokeThickness: 6,
-                    shadow: { color: '#000', blur: 10, stroke: true, fill: true }
+                    strokeThickness: 6
                 }).setOrigin(0.5);
 
-                // Score and carrots
                 this.add.text(400, 250, `Score: ${Math.floor(this.score)}\nCarrots: ${this.carrots}`, {
                     fontSize: '32px',
                     fontFamily: 'Arial',
@@ -939,7 +726,6 @@
                     lineSpacing: 10
                 }).setOrigin(0.5);
 
-                // Create buttons
                 const buttonStyle = {
                     fontSize: '32px',
                     fontFamily: 'Arial',
@@ -950,24 +736,24 @@
                     padding: { x: 20, y: 10 }
                 };
 
-                // Replay button
                 const replayButton = this.add.text(400, 350, 'Replay Level', buttonStyle)
                     .setOrigin(0.5)
                     .setInteractive({ useHandCursor: true })
                     .on('pointerover', () => replayButton.setScale(1.1))
                     .on('pointerout', () => replayButton.setScale(1))
                     .on('pointerdown', () => {
-                        this.scene.start('GameScene', { difficulty: this.difficulty });
+                        this.cameras.main.fade(500, 0, 0, 0);
+                        this.time.delayedCall(500, () => this.scene.start('GameScene', { difficulty: this.difficulty }));
                     });
 
-                // Quiz (Options) button
                 const quizButton = this.add.text(400, 420, 'Try Different Level', buttonStyle)
                     .setOrigin(0.5)
                     .setInteractive({ useHandCursor: true })
                     .on('pointerover', () => quizButton.setScale(1.1))
                     .on('pointerout', () => quizButton.setScale(1))
                     .on('pointerdown', () => {
-                        this.scene.start('OptionsScene');
+                        this.cameras.main.fade(500, 0, 0, 0);
+                        this.time.delayedCall(500, () => this.scene.start('OptionsScene'));
                     });
             }
         }
