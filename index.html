@@ -65,6 +65,17 @@
             }
 
             create() {
+                // Always resume physics in case it was paused
+                if (this.physics.world.isPaused) {
+                    this.physics.resume();
+                }
+
+                // Reset game over flag for perfect replay
+                this._gameOverTriggered = false;
+
+                // Defensive: ensure bunny is not null or destroyed
+                this.bunny = null;
+
                 // Graphics objects
                 this.skyGraphics = this.add.graphics();
                 this.hillsGraphics = this.add.graphics();
@@ -119,6 +130,12 @@
                 this.cursors = this.input.keyboard.createCursorKeys();
                 this.input.on('pointerdown', this.initiateJump, this);
                 this.input.keyboard.on('keydown-SPACE', this.initiateJump, this);
+
+                // Clean up input listeners on shutdown to prevent duplicates
+                this.events.on('shutdown', () => {
+                    this.input.keyboard.off('keydown-SPACE', this.initiateJump, this);
+                    this.input.off('pointerdown', this.initiateJump, this);
+                });
 
                 // UI
                 this.scoreText = this.add.text(16, 16, 'Score: 0', {
@@ -374,6 +391,7 @@
 
             initiateJump() {
                 try {
+                    if (!this.bunny || !this.bunny.active) return;
                     if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
                         if (!this.isCrouching) {
                             this.isCrouching = true;
@@ -673,11 +691,39 @@
 
             gameOver() {
                 try {
+                    if (this._gameOverTriggered) return;
+                    this._gameOverTriggered = true;
                     this.physics.pause();
-                    this.scene.start('GameOverScene', {
-                        score: this.score,
-                        carrots: this.carrots,
-                        difficulty: this.difficulty
+
+                    // Dramatic effect: screen shake, bunny squash/spin/fade, red flash
+                    // 1. Screen shake
+                    this.cameras.main.shake(400, 0.03);
+
+                    // 2. Red flash overlay
+                    const flash = this.add.rectangle(400, 300, 800, 600, 0xFF0000, 0.3).setDepth(1000);
+                    this.tweens.add({
+                        targets: flash,
+                        alpha: 0,
+                        duration: 350,
+                        onComplete: () => flash.destroy()
+                    });
+
+                    // 3. Bunny squash, spin, and fade
+                    this.tweens.add({
+                        targets: this.bunny,
+                        scaleX: 1.5,
+                        scaleY: 0.5,
+                        angle: 360,
+                        alpha: 0,
+                        duration: 600,
+                        ease: 'Cubic.easeIn',
+                        onComplete: () => {
+                            this.scene.start('GameOverScene', {
+                                score: this.score,
+                                carrots: this.carrots,
+                                difficulty: this.difficulty
+                            });
+                        }
                     });
                 } catch (error) {
                     console.warn('Error in gameOver:', error);
@@ -686,20 +732,22 @@
 
             update(time, delta) {
                 try {
+                    if (!this.bunny || !this.bunny.active) return;
                     if (this.bunny.body.touching.down) {
                         this.lastGroundTime = time;
                     }
 
-                    if (this.cursors.right.isDown && !this.isCrouching) {
+                    // --- Perfect movement ---
+                    if (this.cursors.right.isDown && !this.isCrouching && this.bunny.body.touching.down) {
                         this.moveRight();
-                    } else if (this.cursors.left.isDown && !this.isCrouching) {
+                    } else if (this.cursors.left.isDown && !this.isCrouching && this.bunny.body.touching.down) {
                         this.moveLeft();
                     } else {
+                        // Stop instantly if no key pressed
                         this.bunny.body.setVelocityX(0);
-                        this.runSpeed *= 0.85; // Smooth stop
-                        if (Math.abs(this.runSpeed) < 20) this.runSpeed = 0;
+                        this.runSpeed = 0;
                     }
-
+                    // Clamp velocity
                     this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.5, this.speed * 1.5);
 
                     if (!this.bunny.body.touching.down) {
