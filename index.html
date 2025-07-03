@@ -42,6 +42,7 @@
                 this.runSpeed = 0;
                 this.coyoteTime = 150; // More forgiving
                 this.hopSpeed = 0.25; // Base hop cycle speed
+                this.isPaused = false; // Pause state
             }
 
             init(data) {
@@ -105,7 +106,6 @@
                 this.bunny.add([this.bunnyGraphics, this.leftEarGraphics, this.rightEarGraphics]);
                 this.bunny.setSize(60, 80);
                 this.physics.add.existing(this.bunny);
-                this.bunny.body.setGravityY(2000); // Tighter gravity
                 this.bunny.body.setCollideWorldBounds(true);
                 this.bunny.body.setMaxVelocityY(1200);
                 this.bunny.body.setDragX(3000); // Snappy stops
@@ -148,6 +148,27 @@
                     fill: '#000',
                     fontStyle: 'bold'
                 });
+
+                // Pause button
+                this.pauseButton = this.add.graphics();
+                this.pauseButton.setPosition(750, 50);
+                this.drawPauseIcon();
+                this.pauseButton.setInteractive(new Phaser.Geom.Rectangle(-20, -20, 40, 40), Phaser.Geom.Rectangle.Contains);
+                this.pauseButton.on('pointerdown', this.togglePause, this);
+
+                // Pause overlay
+                this.pauseOverlay = this.add.graphics();
+                this.pauseOverlay.fillStyle(0x000000, 0.5);
+                this.pauseOverlay.fillRect(0, 0, 800, 600);
+                this.pauseOverlay.setVisible(false);
+
+                this.pauseText = this.add.text(400, 300, 'PAUSED', {
+                    fontSize: '48px',
+                    fill: '#fff',
+                    fontStyle: 'bold',
+                    stroke: '#000',
+                    strokeThickness: 4
+                }).setOrigin(0.5).setVisible(false);
 
                 // Events
                 this.time.addEvent({
@@ -351,6 +372,9 @@
 
             updateAnimations() {
                 try {
+                    // Check if game is paused
+                    if (this.isPaused) return;
+                    
                     if (this.bunny.body.touching.down && !this.isJumping && !this.isCrouching) {
                         const speedFactor = 1 + Math.abs(this.runSpeed) / this.speed; // Faster hops when running
                         this.hopFrame = (this.hopFrame + this.hopSpeed * speedFactor) % 6;
@@ -373,8 +397,42 @@
                 }
             }
 
+            drawPauseIcon() {
+                this.pauseButton.clear();
+                this.pauseButton.fillStyle(0xFFFFFF, 0.9);
+                this.pauseButton.fillRoundedRect(-20, -20, 40, 40, 8);
+                this.pauseButton.lineStyle(2, 0x000000, 0.8);
+                this.pauseButton.strokeRoundedRect(-20, -20, 40, 40, 8);
+                
+                // Draw pause bars
+                this.pauseButton.fillStyle(0x000000, 1);
+                this.pauseButton.fillRect(-8, -12, 4, 24);
+                this.pauseButton.fillRect(4, -12, 4, 24);
+            }
+
+            togglePause() {
+                this.isPaused = !this.isPaused;
+                if (this.isPaused) {
+                    this.physics.pause();
+                    this.pauseOverlay.setVisible(true);
+                    this.pauseText.setVisible(true);
+                    // Pause all tweens
+                    this.tweens.pauseAll();
+                    // Pause all time events
+                    this.time.getAllEvents().forEach(event => event.paused = true);
+                } else {
+                    this.physics.resume();
+                    this.pauseOverlay.setVisible(false);
+                    this.pauseText.setVisible(false);
+                    // Resume all tweens
+                    this.tweens.resumeAll();
+                    // Resume all time events
+                    this.time.getAllEvents().forEach(event => event.paused = false);
+                }
+            }
+
             moveRight() {
-                if (this.bunny.body.touching.down && !this.isCrouching) {
+                if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
                     this.bunny.body.setVelocityX(this.speed * 1.3); // Instant speed
                     this.bunny.scaleX = 1;
                     this.runSpeed = this.bunny.body.velocity.x;
@@ -382,7 +440,7 @@
             }
 
             moveLeft() {
-                if (this.bunny.body.touching.down && !this.isCrouching) {
+                if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
                     this.bunny.body.setVelocityX(-this.speed * 1.3);
                     this.bunny.scaleX = -1;
                     this.runSpeed = this.bunny.body.velocity.x;
@@ -391,7 +449,7 @@
 
             initiateJump() {
                 try {
-                    if (!this.bunny || !this.bunny.active) return;
+                    if (!this.bunny || !this.bunny.active || this.isPaused) return;
                     if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
                         if (!this.isCrouching) {
                             this.isCrouching = true;
@@ -491,10 +549,14 @@
                     obstacle.body.setAllowGravity(false);
 
                     this.physics.add.overlap(this.bunny, obstacle, (bunny, obs) => {
-                        if (!bunny || !obs || !bunny.active || !obs.active) return;
+                        if (!bunny || !obs || !bunny.active || !obs.active || this.isPaused) return;
                         const collisionY = bunny.y + bunny.body.height / 2;
                         const obstacleTopY = obs.y - obs.body.height / 2;
-                        if (collisionY > obstacleTopY + 30) {
+                        const bunnyBottomY = bunny.y + bunny.body.height / 2;
+                        const obstacleBottomY = obs.y + obs.body.height / 2;
+                        
+                        // Only trigger game over if bunny hits the obstacle from above (landing on it)
+                        if (bunnyBottomY > obstacleTopY + 20 && bunnyBottomY < obstacleBottomY - 10) {
                             this.gameOver();
                         }
                     }, null, this);
@@ -718,6 +780,7 @@
                         duration: 600,
                         ease: 'Cubic.easeIn',
                         onComplete: () => {
+                            this.cleanup();
                             this.scene.start('GameOverScene', {
                                 score: this.score,
                                 carrots: this.carrots,
@@ -730,9 +793,36 @@
                 }
             }
 
+            cleanup() {
+                // Clean up graphics objects
+                if (this.skyGraphics) this.skyGraphics.destroy();
+                if (this.hillsGraphics) this.hillsGraphics.destroy();
+                if (this.bushesGraphics) this.bushesGraphics.destroy();
+                if (this.groundGraphics) this.groundGraphics.destroy();
+                if (this.bunnyGraphics) this.bunnyGraphics.destroy();
+                if (this.leftEarGraphics) this.leftEarGraphics.destroy();
+                if (this.rightEarGraphics) this.rightEarGraphics.destroy();
+                
+                // Clean up clouds
+                if (this.clouds) {
+                    this.clouds.forEach(cloud => {
+                        if (cloud && cloud.active) cloud.destroy();
+                    });
+                    this.clouds = [];
+                }
+                
+                // Clean up groups
+                if (this.platforms) this.platforms.clear(true, true);
+                if (this.walls) this.walls.clear(true, true);
+            }
+
             update(time, delta) {
                 try {
                     if (!this.bunny || !this.bunny.active) return;
+                    
+                    // Check if game is paused
+                    if (this.isPaused) return;
+                    
                     if (this.bunny.body.touching.down) {
                         this.lastGroundTime = time;
                     }
@@ -750,7 +840,7 @@
                     // Clamp velocity
                     this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.5, this.speed * 1.5);
 
-                    if (!this.bunny.body.touching.down) {
+                    if (!this.bunny.body.touching.down && this.isJumping) {
                         this.score += delta / 1000 * 10;
                         this.scoreText.setText('Score: ' + Math.floor(this.score));
                     } else if (this.isJumping) {
@@ -1101,7 +1191,7 @@
             physics: {
                 default: 'arcade',
                 arcade: {
-                    gravity: { y: 0 },
+                    gravity: { y: 2000 },
                     debug: false,
                     tileBias: 40,
                     fps: 60
