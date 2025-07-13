@@ -43,6 +43,8 @@
                 this.coyoteTime = 150; // More forgiving
                 this.hopSpeed = 0.25; // Base hop cycle speed
                 this.isPaused = false; // Pause state
+                this.lastFrameTime = 0; // Performance monitoring
+                this.frameCount = 0; // Performance monitoring
             }
 
             init(data) {
@@ -126,7 +128,7 @@
                 this.physics.add.collider(this.bunny, this.platforms);
                 this.physics.add.collider(this.bunny, this.walls);
 
-                // Input
+                // Input - use single event handler to prevent conflicts
                 this.cursors = this.input.keyboard.createCursorKeys();
                 this.input.on('pointerdown', this.initiateJump, this);
                 this.input.keyboard.on('keydown-SPACE', this.initiateJump, this);
@@ -136,6 +138,9 @@
                     this.input.keyboard.off('keydown-SPACE', this.initiateJump, this);
                     this.input.off('pointerdown', this.initiateJump, this);
                 });
+                
+                // Prevent multiple rapid inputs
+                this.lastJumpTime = 0;
 
                 // UI
                 this.scoreText = this.add.text(16, 16, 'Score: 0', {
@@ -196,7 +201,7 @@
                     loop: true
                 });
                 this.time.addEvent({
-                    delay: 20, // Ultra-smooth animations
+                    delay: 16, // Fast animations for responsive feel
                     callback: this.updateAnimations,
                     callbackScope: this,
                     loop: true
@@ -356,8 +361,8 @@
                 this.bunnyGraphics.lineBetween(14, -3 + hopHeight + breathingOffset, 35, -3 + whiskerSway + hopHeight + breathingOffset);
                 this.bunnyGraphics.lineBetween(14, 0 + hopHeight + breathingOffset, 33, 3 + whiskerSway + hopHeight + breathingOffset);
 
-                // Dust trail
-                if (Math.abs(this.runSpeed) > 100 && this.bunny.body.touching.down && this.hopPhase > 0.4 && this.hopPhase < 0.6) {
+                // Dust trail - create frequently for visual feedback
+                if (Math.abs(this.runSpeed) > 100 && this.bunny.body.touching.down && this.hopPhase > 0.4 && this.hopPhase < 0.6 && this.time.now % 30 < 20) {
                     const dust = this.add.circle(this.bunny.x - 30 * Math.sign(this.runSpeed || 1), this.bunny.y + 30, 5, 0xA9A9A9, 0.4);
                     this.tweens.add({
                         targets: dust,
@@ -365,7 +370,11 @@
                         y: dust.y - Phaser.Math.Between(10, 20),
                         alpha: 0,
                         duration: 300,
-                        onComplete: () => dust.destroy()
+                        onComplete: () => {
+                            if (dust && dust.active) {
+                                dust.destroy();
+                            }
+                        }
                     });
                 }
             }
@@ -433,7 +442,7 @@
 
             moveRight() {
                 if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
-                    this.bunny.body.setVelocityX(this.speed * 1.3); // Instant speed
+                    this.bunny.body.setVelocityX(this.speed * 1.5); // Faster speed
                     this.bunny.scaleX = 1;
                     this.runSpeed = this.bunny.body.velocity.x;
                 }
@@ -441,7 +450,7 @@
 
             moveLeft() {
                 if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
-                    this.bunny.body.setVelocityX(-this.speed * 1.3);
+                    this.bunny.body.setVelocityX(-this.speed * 1.5);
                     this.bunny.scaleX = -1;
                     this.runSpeed = this.bunny.body.velocity.x;
                 }
@@ -450,8 +459,13 @@
             initiateJump() {
                 try {
                     if (!this.bunny || !this.bunny.active || this.isPaused) return;
+                    
+                    // Minimal jump cooldown to prevent bugs but allow fast jumping
+                    if (this.time.now - this.lastJumpTime < 20) return;
+                    
                     if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
                         if (!this.isCrouching) {
+                            this.lastJumpTime = this.time.now;
                             this.isCrouching = true;
                             this.crouchTime = this.time.now;
                             this.tweens.add({
@@ -495,9 +509,8 @@
                                 }
                             }
                         });
-                        const dust = this.add.graphics();
-                        dust.fillStyle(0xA9A9A9, 0.6);
-                        for (let i = 0; i < 12; i++) {
+                        // Reduced dust particles to prevent memory leaks
+                        for (let i = 0; i < 6; i++) {
                             const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-25, 25), this.bunny.y + 30, 4, 0xA9A9A9, 0.6);
                             this.tweens.add({
                                 targets: dustParticle,
@@ -814,6 +827,12 @@
                 // Clean up groups
                 if (this.platforms) this.platforms.clear(true, true);
                 if (this.walls) this.walls.clear(true, true);
+                
+                // Stop all tweens to prevent memory leaks
+                this.tweens.killAll();
+                
+                // Clear all time events
+                this.time.removeAllEvents();
             }
 
             update(time, delta) {
@@ -822,6 +841,17 @@
                     
                     // Check if game is paused
                     if (this.isPaused) return;
+                    
+                    // Minimal performance monitoring - only in extreme cases
+                    this.frameCount++;
+                    if (this.frameCount % 300 === 0) {
+                        const fps = 1000 / (time - this.lastFrameTime);
+                        if (fps < 15) {
+                            // Only reduce animation complexity in extreme cases
+                            this.hopSpeed = Math.max(0.2, this.hopSpeed * 0.98);
+                        }
+                        this.lastFrameTime = time;
+                    }
                     
                     if (this.bunny.body.touching.down) {
                         this.lastGroundTime = time;
@@ -837,8 +867,12 @@
                         this.bunny.body.setVelocityX(0);
                         this.runSpeed = 0;
                     }
-                    // Clamp velocity
-                    this.bunny.body.velocity.x = Phaser.Math.Clamp(this.bunny.body.velocity.x, -this.speed * 1.5, this.speed * 1.5);
+                    // Clamp velocity using setVelocityX to avoid physics conflicts
+                    const currentVel = this.bunny.body.velocity.x;
+                    const maxVel = this.speed * 1.5;
+                    if (Math.abs(currentVel) > maxVel) {
+                        this.bunny.body.setVelocityX(Math.sign(currentVel) * maxVel);
+                    }
 
                     if (!this.bunny.body.touching.down && this.isJumping) {
                         this.score += delta / 1000 * 10;
@@ -864,6 +898,8 @@
                     this.bushesGraphics.x -= 1;
                     if (this.hillsGraphics.x < -400) this.hillsGraphics.x += 800;
                     if (this.bushesGraphics.x < -400) this.bushesGraphics.x += 800;
+                    
+                    // Redraw ground every frame for smooth scrolling
                     this.drawGround();
                 } catch (error) {
                     console.warn('Error in update:', error);
