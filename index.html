@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hop Hop Bunny</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <script src="powerups.js"></script>
     <style>
         body {
             margin: 0;
@@ -40,11 +41,31 @@
                 this.tailFlickFrame = 0;
                 this.crouchTime = 0;
                 this.runSpeed = 0;
-                this.coyoteTime = 150; // More forgiving
+                this.coyoteTime = 300; // More forgiving coyote time
                 this.hopSpeed = 0.25; // Base hop cycle speed
                 this.isPaused = false; // Pause state
                 this.lastFrameTime = 0; // Performance monitoring
                 this.frameCount = 0; // Performance monitoring
+                
+                // Power-up system properties
+                this.hasDoubleJump = false;
+                this.hasShield = false;
+                this.hasMagnet = false;
+                this.hasTimeSlow = false;
+                this.hasGravityReverse = false;
+                this.hasMultiCollect = false;
+                this.hasInvincibility = false;
+                this.hasWallJump = false;
+                this.hasDash = false;
+                this.hasBounce = false;
+                this.hasPhaseThrough = false;
+                this.hasTimeFreeze = false;
+                this.hasGhostMode = false;
+                this.hasSuperJump = false;
+                this.originalSpeed = null; // Will be set when speed boost is activated
+                this.doubleJumpCount = 0;
+                this.bounceMultiplier = 1.0;
+                this.superJumpMultiplier = 1.0;
             }
 
             init(data) {
@@ -110,7 +131,7 @@
                 this.physics.add.existing(this.bunny);
                 this.bunny.body.setCollideWorldBounds(true);
                 this.bunny.body.setMaxVelocityY(1200);
-                this.bunny.body.setDragX(3000); // Snappy stops
+                this.bunny.body.setDragX(800); // More responsive movement
                 this.updateBunnyGraphics();
 
                 // Groups
@@ -123,15 +144,46 @@
                     immovable: true
                 });
 
-                // Collisions
+                // Collisions - more forgiving
                 this.physics.add.collider(this.bunny, this.ground);
                 this.physics.add.collider(this.bunny, this.platforms);
-                this.physics.add.collider(this.bunny, this.walls);
+                
+                // Custom wall collision handling for better control
+                this.physics.add.overlap(this.bunny, this.walls, (bunny, wall) => {
+                    if (!bunny || !wall || !bunny.active || !wall.active || this.isPaused) return;
+                    
+                    // Phase through power-up
+                    if (this.hasPhaseThrough) {
+                        return;
+                    }
+                    
+                    // Only stop horizontal movement if hitting wall from the side
+                    const bunnyLeft = bunny.x - bunny.body.width / 2;
+                    const bunnyRight = bunny.x + bunny.body.width / 2;
+                    const wallLeft = wall.x - wall.body.width / 2;
+                    const wallRight = wall.x + wall.body.width / 2;
+                    
+                    // If bunny is moving into wall, stop horizontal movement
+                    if ((bunny.body.velocity.x > 0 && bunnyRight > wallLeft && bunnyLeft < wallRight) ||
+                        (bunny.body.velocity.x < 0 && bunnyLeft < wallRight && bunnyRight > wallLeft)) {
+                        bunny.body.setVelocityX(0);
+                    }
+                }, null, this);
 
-                // Input - use single event handler to prevent conflicts
+                // Input - simplified and more responsive
                 this.cursors = this.input.keyboard.createCursorKeys();
                 this.input.on('pointerdown', this.initiateJump, this);
                 this.input.keyboard.on('keydown-SPACE', this.initiateJump, this);
+                
+                // Add double jump input
+                this.input.keyboard.on('keydown-W', this.handleDoubleJump, this);
+                this.input.keyboard.on('keydown-UP', this.handleDoubleJump, this);
+                
+                // Add dash input
+                this.input.keyboard.on('keydown-SHIFT', this.handleDash, this);
+                
+                // Add wall jump input
+                this.input.keyboard.on('keydown-Q', this.handleWallJump, this);
 
                 // Clean up input listeners on shutdown to prevent duplicates
                 this.events.on('shutdown', () => {
@@ -139,8 +191,9 @@
                     this.input.off('pointerdown', this.initiateJump, this);
                 });
                 
-                // Prevent multiple rapid inputs
+                // More responsive jump timing
                 this.lastJumpTime = 0;
+                this.inputBuffer = 0; // Input buffer for better responsiveness
 
                 // UI
                 this.scoreText = this.add.text(16, 16, 'Score: 0', {
@@ -206,6 +259,9 @@
                     callbackScope: this,
                     loop: true
                 });
+                
+                // Initialize power-up system
+                this.powerUpManager = new PowerUpManager(this);
             }
 
             drawSky() {
@@ -441,16 +497,20 @@
             }
 
             moveRight() {
-                if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
-                    this.bunny.body.setVelocityX(this.speed * 1.5); // Faster speed
+                if (!this.isCrouching && !this.isPaused) {
+                    // Allow movement in air for better control
+                    const moveSpeed = this.bunny.body.touching.down ? this.speed * 1.5 : this.speed * 0.8;
+                    this.bunny.body.setVelocityX(moveSpeed);
                     this.bunny.scaleX = 1;
                     this.runSpeed = this.bunny.body.velocity.x;
                 }
             }
 
             moveLeft() {
-                if (this.bunny.body.touching.down && !this.isCrouching && !this.isPaused) {
-                    this.bunny.body.setVelocityX(-this.speed * 1.5);
+                if (!this.isCrouching && !this.isPaused) {
+                    // Allow movement in air for better control
+                    const moveSpeed = this.bunny.body.touching.down ? this.speed * 1.5 : this.speed * 0.8;
+                    this.bunny.body.setVelocityX(-moveSpeed);
                     this.bunny.scaleX = -1;
                     this.runSpeed = this.bunny.body.velocity.x;
                 }
@@ -460,39 +520,138 @@
                 try {
                     if (!this.bunny || !this.bunny.active || this.isPaused) return;
                     
-                    // Minimal jump cooldown to prevent bugs but allow fast jumping
-                    if (this.time.now - this.lastJumpTime < 20) return;
+                    // More responsive jump timing
+                    if (this.time.now - this.lastJumpTime < 50) return;
                     
-                    if (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime)) {
-                        if (!this.isCrouching) {
-                            this.lastJumpTime = this.time.now;
-                            this.isCrouching = true;
-                            this.crouchTime = this.time.now;
-                            this.tweens.add({
-                                targets: this.bunny,
-                                scaleY: 0.75,
-                                scaleX: 1.15,
-                                duration: 80,
-                                onComplete: () => {
-                                    if (this.bunny && this.bunny.active) {
-                                        this.performJump();
-                                    }
+                    // Better coyote time and jump conditions
+                    const canJump = this.bunny.body.touching.down || 
+                                  (this.time.now - this.lastGroundTime < this.coyoteTime) ||
+                                  this.hasDoubleJump;
+                    
+                    if (canJump && !this.isCrouching) {
+                        this.lastJumpTime = this.time.now;
+                        this.isCrouching = true;
+                        this.crouchTime = this.time.now;
+                        this.tweens.add({
+                            targets: this.bunny,
+                            scaleY: 0.75,
+                            scaleX: 1.15,
+                            duration: 60, // Faster crouch
+                            onComplete: () => {
+                                if (this.bunny && this.bunny.active) {
+                                    this.performJump();
                                 }
-                            });
-                            // Tail flick anticipation
-                            this.tailFlickFrame = 2;
-                            this.updateBunnyGraphics();
-                        }
+                            }
+                        });
+                        // Tail flick anticipation
+                        this.tailFlickFrame = 2;
+                        this.updateBunnyGraphics();
                     }
                 } catch (error) {
                     console.warn('Error initiating jump:', error);
+                }
+            }
+            
+            handleDoubleJump() {
+                if (this.powerUpManager) {
+                    this.powerUpManager.handleDoubleJump();
+                }
+            }
+            
+            handleDash() {
+                if (this.hasDash && this.bunny.body.touching.down && !this.isPaused) {
+                    const dashDistance = 150;
+                    const dashDirection = this.runSpeed > 0 ? 1 : -1;
+                    
+                    // Dash forward
+                    this.bunny.x += dashDistance * dashDirection;
+                    
+                    // Dash effect
+                    for (let i = 0; i < 10; i++) {
+                        const particle = this.add.circle(
+                            this.bunny.x + Phaser.Math.Between(-20, 20),
+                            this.bunny.y + Phaser.Math.Between(-20, 20),
+                            3,
+                            0xE67E22,
+                            0.8
+                        );
+                        
+                        this.tweens.add({
+                            targets: particle,
+                            x: particle.x + dashDistance * dashDirection,
+                            alpha: 0,
+                            duration: 300,
+                            onComplete: () => particle.destroy()
+                        });
+                    }
+                }
+            }
+            
+            handleWallJump() {
+                if (this.hasWallJump && !this.bunny.body.touching.down && !this.isPaused) {
+                    // Check if near a wall (platform or obstacle)
+                    const wallDistance = 50;
+                    const bunnyX = this.bunny.x;
+                    
+                    // Check for walls on left and right
+                    let canWallJump = false;
+                    let wallDirection = 0;
+                    
+                    this.platforms.children.entries.forEach(platform => {
+                        if (platform.active) {
+                            const distance = Math.abs(platform.x - bunnyX);
+                            if (distance < wallDistance) {
+                                canWallJump = true;
+                                wallDirection = platform.x > bunnyX ? -1 : 1;
+                            }
+                        }
+                    });
+                    
+                    this.walls.children.entries.forEach(wall => {
+                        if (wall.active) {
+                            const distance = Math.abs(wall.x - bunnyX);
+                            if (distance < wallDistance) {
+                                canWallJump = true;
+                                wallDirection = wall.x > bunnyX ? -1 : 1;
+                            }
+                        }
+                    });
+                    
+                    if (canWallJump) {
+                        // Wall jump effect
+                        this.bunny.body.setVelocityY(-800);
+                        this.bunny.body.setVelocityX(wallDirection * 400);
+                        
+                        // Wall jump particles
+                        for (let i = 0; i < 8; i++) {
+                            const particle = this.add.circle(
+                                this.bunny.x + wallDirection * 30,
+                                this.bunny.y + Phaser.Math.Between(-20, 20),
+                                3,
+                                0x8E44AD,
+                                0.8
+                            );
+                            
+                            this.tweens.add({
+                                targets: particle,
+                                x: particle.x + wallDirection * 50,
+                                y: particle.y + Phaser.Math.Between(-30, 30),
+                                alpha: 0,
+                                duration: 400,
+                                onComplete: () => particle.destroy()
+                            });
+                        }
+                    }
                 }
             }
 
             performJump() {
                 try {
                     if (this.isCrouching && (this.bunny.body.touching.down || (this.time.now - this.lastGroundTime < this.coyoteTime))) {
-                        const jumpVelocity = -950 - Math.abs(this.runSpeed) * 0.3;
+                        // Apply super jump multiplier if active
+                        const baseJumpVelocity = -1000 - Math.abs(this.runSpeed) * 0.2; // Stronger base jump
+                        const jumpVelocity = baseJumpVelocity * (this.superJumpMultiplier || 1.0);
+                        
                         this.bunny.body.setVelocityY(jumpVelocity);
                         this.isJumping = true;
                         this.isCrouching = false;
@@ -500,7 +659,7 @@
                             targets: this.bunny,
                             scale: { x: 1.25, y: 0.85 },
                             angle: this.runSpeed > 0 ? 35 : -35,
-                            duration: 180,
+                            duration: 150, // Faster animation
                             yoyo: true,
                             onComplete: () => {
                                 if (this.bunny && this.bunny.active) {
@@ -510,14 +669,14 @@
                             }
                         });
                         // Reduced dust particles to prevent memory leaks
-                        for (let i = 0; i < 6; i++) {
-                            const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-25, 25), this.bunny.y + 30, 4, 0xA9A9A9, 0.6);
+                        for (let i = 0; i < 4; i++) {
+                            const dustParticle = this.add.circle(this.bunny.x + Phaser.Math.Between(-20, 20), this.bunny.y + 30, 3, 0xA9A9A9, 0.6);
                             this.tweens.add({
                                 targets: dustParticle,
-                                x: dustParticle.x + Phaser.Math.Between(-40, 40),
-                                y: dustParticle.y + Phaser.Math.Between(10, 30),
+                                x: dustParticle.x + Phaser.Math.Between(-30, 30),
+                                y: dustParticle.y + Phaser.Math.Between(10, 25),
                                 alpha: 0,
-                                duration: 350,
+                                duration: 300,
                                 onComplete: () => {
                                     if (dustParticle && dustParticle.active) {
                                         dustParticle.destroy();
@@ -563,13 +722,30 @@
 
                     this.physics.add.overlap(this.bunny, obstacle, (bunny, obs) => {
                         if (!bunny || !obs || !bunny.active || !obs.active || this.isPaused) return;
-                        const collisionY = bunny.y + bunny.body.height / 2;
-                        const obstacleTopY = obs.y - obs.body.height / 2;
-                        const bunnyBottomY = bunny.y + bunny.body.height / 2;
-                        const obstacleBottomY = obs.y + obs.body.height / 2;
                         
-                        // Only trigger game over if bunny hits the obstacle from above (landing on it)
-                        if (bunnyBottomY > obstacleTopY + 20 && bunnyBottomY < obstacleBottomY - 10) {
+                        // Shield or invincibility protection
+                        if (this.hasShield || this.hasInvincibility) {
+                            // Destroy obstacle instead of game over
+                            obs.destroy();
+                            return;
+                        }
+                        
+                        // Phase through power-up
+                        if (this.hasPhaseThrough) {
+                            return;
+                        }
+                        
+                        // More forgiving collision detection
+                        const bunnyBottomY = bunny.y + bunny.body.height / 2;
+                        const obstacleTopY = obs.y - obs.body.height / 2;
+                        const bunnyCenterX = bunny.x;
+                        const obstacleCenterX = obs.x;
+                        const horizontalDistance = Math.abs(bunnyCenterX - obstacleCenterX);
+                        const verticalDistance = bunnyBottomY - obstacleTopY;
+                        
+                        // Only trigger game over if bunny is clearly hitting the obstacle
+                        // and not just grazing it
+                        if (horizontalDistance < 40 && verticalDistance > 10 && verticalDistance < 60) {
                             this.gameOver();
                         }
                     }, null, this);
@@ -833,6 +1009,11 @@
                 
                 // Clear all time events
                 this.time.removeAllEvents();
+                
+                // Clean up power-up system
+                if (this.powerUpManager) {
+                    this.powerUpManager.cleanup();
+                }
             }
 
             update(time, delta) {
@@ -857,16 +1038,19 @@
                         this.lastGroundTime = time;
                     }
 
-                    // --- Perfect movement ---
-                    if (this.cursors.right.isDown && !this.isCrouching && this.bunny.body.touching.down) {
+                    // --- Improved movement with air control ---
+                    if (this.cursors.right.isDown && !this.isCrouching) {
                         this.moveRight();
-                    } else if (this.cursors.left.isDown && !this.isCrouching && this.bunny.body.touching.down) {
+                    } else if (this.cursors.left.isDown && !this.isCrouching) {
                         this.moveLeft();
                     } else {
-                        // Stop instantly if no key pressed
-                        this.bunny.body.setVelocityX(0);
-                        this.runSpeed = 0;
+                        // Gradual stop instead of instant stop for smoother control
+                        if (this.bunny.body.touching.down) {
+                            this.bunny.body.setVelocityX(this.bunny.body.velocity.x * 0.8);
+                        }
+                        this.runSpeed = this.bunny.body.velocity.x;
                     }
+                    
                     // Clamp velocity using setVelocityX to avoid physics conflicts
                     const currentVel = this.bunny.body.velocity.x;
                     const maxVel = this.speed * 1.5;
@@ -901,8 +1085,57 @@
                     
                     // Redraw ground every frame for smooth scrolling
                     this.drawGround();
+                    
+                    // Update power-up system
+                    if (this.powerUpManager) {
+                        this.powerUpManager.update();
+                    }
+                    
+                    // Update new power-up effects
+                    this.updateNewPowerUpEffects();
                 } catch (error) {
                     console.warn('Error in update:', error);
+                }
+            }
+            
+            updateNewPowerUpEffects() {
+                // Update invincibility effect
+                if (this.hasInvincibility && this.invincibilityGraphics) {
+                    this.invincibilityGraphics.clear();
+                    this.invincibilityGraphics.fillStyle(0xFFD700, 0.6);
+                    this.invincibilityGraphics.fillCircle(0, 0, 60);
+                    this.invincibilityGraphics.lineStyle(3, 0xFFD700, 0.8);
+                    this.invincibilityGraphics.strokeCircle(0, 0, 60);
+                }
+                
+                // Update dash trail effect
+                if (this.hasDash && this.dashTrail && Math.abs(this.runSpeed) > 50) {
+                    this.dashTrail.clear();
+                    this.dashTrail.fillStyle(0xE67E22, 0.4);
+                    this.dashTrail.fillCircle(-40 * Math.sign(this.runSpeed), 0, 20);
+                    this.dashTrail.fillStyle(0xE67E22, 0.2);
+                    this.dashTrail.fillCircle(-60 * Math.sign(this.runSpeed), 0, 15);
+                }
+                
+                // Update phase through trail effect
+                if (this.hasPhaseThrough && this.phaseTrail) {
+                    this.phaseTrail.clear();
+                    this.phaseTrail.fillStyle(0x9B59B6, 0.3);
+                    this.phaseTrail.fillCircle(0, 0, 40);
+                    this.phaseTrail.lineStyle(2, 0x9B59B6, 0.5);
+                    this.phaseTrail.strokeCircle(0, 0, 40);
+                }
+                
+                // Update ghost mode particles
+                if (this.hasGhostMode && this.ghostParticles) {
+                    this.ghostParticles.clear();
+                    this.ghostParticles.fillStyle(0x95A5A6, 0.4);
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (this.time.now / 1000 + i * 0.5) % (Math.PI * 2);
+                        const x = Math.cos(angle) * 30;
+                        const y = Math.sin(angle) * 30;
+                        this.ghostParticles.fillCircle(x, y, 3);
+                    }
                 }
             }
         }
@@ -965,6 +1198,9 @@
                     '',
                     '⌨️ Space/Click - Jump',
                     '⌨️ Left/Right - Move',
+                    '⌨️ W/Up - Double Jump',
+                    '⌨️ Shift - Dash',
+                    '⌨️ Q - Wall Jump',
                     '',
                     '🥕 Collect carrots for powers!'
                 ].join('\n');
